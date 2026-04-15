@@ -171,16 +171,19 @@ class GlitchPanel(Panel):
         params: dict[str, object] = {}
         for mode_name in GLITCH_MODES:
             params[f"{mode_name}_enabled"] = ctx.panel.get_state(
-                f"{mode_name}_enabled", False,
+                f"{mode_name}_enabled",
+                False,
             )
             params[f"{mode_name}_intensity"] = ctx.panel.get_state(
-                f"{mode_name}_intensity", 50.0,
+                f"{mode_name}_intensity",
+                50.0,
             )
         params["noise_enabled"] = ctx.panel.get_state("noise_enabled", False)
         params["noise_scale"] = ctx.panel.get_state("noise_scale", 10.0)
         params["seed"] = ctx.panel.get_state("seed")
         params["filename_suffix"] = ctx.panel.get_state(
-            "filename_suffix", "_glitch_{TIMESTAMP}",
+            "filename_suffix",
+            "_glitch_{TIMESTAMP}",
         )
 
         ctx.trigger(

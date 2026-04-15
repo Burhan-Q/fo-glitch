@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from copy import deepcopy
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
 
@@ -110,7 +109,11 @@ class GlitchProfile:
                 mode_kwargs[mode_name] = ModeConfig.from_dict(raw)
 
         noise_raw = data.get("noise")
-        noise = NoiseConfig.from_dict(noise_raw) if isinstance(noise_raw, dict) else NoiseConfig()
+        noise = (
+            NoiseConfig.from_dict(noise_raw)
+            if isinstance(noise_raw, dict)
+            else NoiseConfig()
+        )
 
         seed_raw = data.get("seed")
         seed = int(seed_raw) if seed_raw is not None else None

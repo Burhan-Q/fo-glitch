@@ -13,7 +13,6 @@ import numpy as np
 from .config import (
     GLITCH_MODES,
     MODE_LABELS,
-    GlitchProfile,
     expand_suffix,
     profile_from_params,
 )
@@ -39,9 +38,7 @@ class ApplyGlitch(foo.Operator):
         return foo.OperatorConfig(
             name="apply_glitch",
             label="Apply Glitch",
-            description=(
-                "Configure and apply glitch augmentation to dataset samples"
-            ),
+            description=("Configure and apply glitch augmentation to dataset samples"),
             icon="auto_fix_high",
             dynamic=True,
             execute_as_generator=True,
@@ -83,26 +80,20 @@ class ApplyGlitch(foo.Operator):
             inputs.float(
                 f"{mode_name}_intensity",
                 label="Intensity (%)",
-                default=float(
-                    ctx.params.get(f"{mode_name}_intensity", 50.0)
-                ),
+                default=float(ctx.params.get(f"{mode_name}_intensity", 50.0)),
                 min=0.0,
                 max=100.0,
                 view=types.FieldView(space=8, read_only=not enabled),
             )
 
         # -- Inline preview ------------------------------------------
-        has_enabled = any(
-            ctx.params.get(f"{m}_enabled") for m in GLITCH_MODES
-        )
+        has_enabled = any(ctx.params.get(f"{m}_enabled") for m in GLITCH_MODES)
 
         inputs.md("### Preview")
         inputs.bool(
             "show_preview",
             label="Show preview",
-            description=(
-                "Render a glitched preview of the selected sample"
-            ),
+            description=("Render a glitched preview of the selected sample"),
             default=bool(ctx.params.get("show_preview", False)),
         )
 
@@ -124,9 +115,7 @@ class ApplyGlitch(foo.Operator):
                     "no_sample_warning",
                     types.Warning(
                         label="No sample available",
-                        description=(
-                            "Select a sample in the grid to preview."
-                        ),
+                        description=("Select a sample in the grid to preview."),
                     ),
                 )
 
@@ -136,9 +125,7 @@ class ApplyGlitch(foo.Operator):
         inputs.bool(
             "noise_enabled",
             label="Enable noise injection",
-            description=(
-                "Jitter each mode's intensity per sample so results vary"
-            ),
+            description=("Jitter each mode's intensity per sample so results vary"),
             default=bool(ctx.params.get("noise_enabled", False)),
         )
         if ctx.params.get("noise_enabled"):
@@ -163,9 +150,7 @@ class ApplyGlitch(foo.Operator):
                 "Appended to source filename. Placeholders: "
                 "{TIMESTAMP}, {DATETIME}, {DATE}, {INDEX}, {PROFILE}, {MODE}"
             ),
-            default=str(
-                ctx.params.get("filename_suffix", "_glitch_{TIMESTAMP}")
-            ),
+            default=str(ctx.params.get("filename_suffix", "_glitch_{TIMESTAMP}")),
         )
 
         # -- Target --------------------------------------------------
@@ -201,9 +186,7 @@ class ApplyGlitch(foo.Operator):
             )
 
         if target == "saved_view":
-            saved_views = (
-                ctx.dataset.list_saved_views() if ctx.dataset else []
-            )
+            saved_views = ctx.dataset.list_saved_views() if ctx.dataset else []
             if saved_views:
                 view_choices = types.Dropdown()
                 for sv in saved_views:
@@ -229,9 +212,7 @@ class ApplyGlitch(foo.Operator):
                 "no_modes_warning",
                 types.Warning(
                     label="No modes enabled",
-                    description=(
-                        "Enable at least one corruption mode above."
-                    ),
+                    description=("Enable at least one corruption mode above."),
                 ),
             )
 
@@ -239,9 +220,7 @@ class ApplyGlitch(foo.Operator):
             "delegate",
             default=False,
             label="Delegate execution?",
-            description=(
-                "Run in the background (recommended for large targets)"
-            ),
+            description=("Run in the background (recommended for large targets)"),
             view=types.CheckboxView(),
         )
 
@@ -280,7 +259,8 @@ class ApplyGlitch(foo.Operator):
         target_view = self._resolve_target(ctx)
         if target_view is None or len(target_view) == 0:
             ctx.ops.notify(
-                "No samples in target — nothing to do.", type="warning",
+                "No samples in target — nothing to do.",
+                type="warning",
             )
             yield {"status": "empty_target", "count": 0}
             return
@@ -297,8 +277,7 @@ class ApplyGlitch(foo.Operator):
             src_path = Path(sample.filepath)
             expanded_suffix = expand_suffix(suffix_template, profile, i)
             out_path = str(
-                src_path.parent
-                / f"{src_path.stem}{expanded_suffix}{src_path.suffix}"
+                src_path.parent / f"{src_path.stem}{expanded_suffix}{src_path.suffix}"
             )
             save_image(corrupted, out_path)
 
@@ -339,15 +318,10 @@ class ApplyGlitch(foo.Operator):
 
         count = result.get("count", 0)
         modes = result.get("modes", [])
-        mode_str = (
-            ", ".join(MODE_LABELS.get(m, m) for m in modes)
-            if modes
-            else "none"
-        )
+        mode_str = ", ".join(MODE_LABELS.get(m, m) for m in modes) if modes else "none"
 
         outputs.md(
-            f"**Generated {count} glitched sample(s)**\n\n"
-            f"**Modes applied:** {mode_str}"
+            f"**Generated {count} glitched sample(s)**\n\n**Modes applied:** {mode_str}"
         )
         return types.Property(outputs)
 
@@ -380,7 +354,8 @@ class ApplyGlitch(foo.Operator):
         if ratio < 1.0:
             new_h, new_w = int(h * ratio), int(w * ratio)
             pil = PILImage.fromarray(img).resize(
-                (new_w, new_h), PILImage.LANCZOS,
+                (new_w, new_h),
+                PILImage.LANCZOS,
             )
             img = np.asarray(pil, dtype=np.uint8)
 
@@ -448,9 +423,7 @@ class CleanPreviews(foo.Operator):
         return foo.OperatorConfig(
             name="clean_previews",
             label="Clean Glitch Previews",
-            description=(
-                "Remove all temporary glitch preview samples and files"
-            ),
+            description=("Remove all temporary glitch preview samples and files"),
             unlisted=True,
         )
 

@@ -46,7 +46,9 @@ def save_image(img: np.ndarray, filepath: str | Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def pixel_sort(img: np.ndarray, intensity: float, rng: np.random.Generator) -> np.ndarray:
+def pixel_sort(
+    img: np.ndarray, intensity: float, rng: np.random.Generator
+) -> np.ndarray:
     """Sort pixels within rows by luminance between brightness thresholds.
 
     For each row the function identifies contiguous spans of pixels whose
@@ -111,7 +113,9 @@ def _contiguous_spans(mask: np.ndarray) -> list[tuple[int, int]]:
     return spans
 
 
-def row_displacement(img: np.ndarray, intensity: float, rng: np.random.Generator) -> np.ndarray:
+def row_displacement(
+    img: np.ndarray, intensity: float, rng: np.random.Generator
+) -> np.ndarray:
     """Shift each row horizontally by a random offset.
 
     Simulates scan-line displacement / signal timing errors.
@@ -146,7 +150,9 @@ def row_displacement(img: np.ndarray, intensity: float, rng: np.random.Generator
     return out
 
 
-def block_corruption(img: np.ndarray, intensity: float, rng: np.random.Generator) -> np.ndarray:
+def block_corruption(
+    img: np.ndarray, intensity: float, rng: np.random.Generator
+) -> np.ndarray:
     """Scramble, freeze, or zero 16x16 pixel blocks at random positions.
 
     Simulates H.264/H.265 macro-block corruption from lost I-frames.
@@ -198,7 +204,9 @@ def block_corruption(img: np.ndarray, intensity: float, rng: np.random.Generator
     return out
 
 
-def channel_shift(img: np.ndarray, intensity: float, rng: np.random.Generator) -> np.ndarray:
+def channel_shift(
+    img: np.ndarray, intensity: float, rng: np.random.Generator
+) -> np.ndarray:
     """Offset R, G, B planes by different random pixel amounts.
 
     Simulates chroma sub-sampling errors during signal transmission.
@@ -226,7 +234,9 @@ def channel_shift(img: np.ndarray, intensity: float, rng: np.random.Generator) -
     return out
 
 
-def frame_tear(img: np.ndarray, intensity: float, rng: np.random.Generator) -> np.ndarray:
+def frame_tear(
+    img: np.ndarray, intensity: float, rng: np.random.Generator
+) -> np.ndarray:
     """Split image at random y-coordinates and offset halves horizontally.
 
     Simulates torn frames from missing vsync in real-time capture.
@@ -258,7 +268,9 @@ def frame_tear(img: np.ndarray, intensity: float, rng: np.random.Generator) -> n
     return out
 
 
-def scanline_noise(img: np.ndarray, intensity: float, rng: np.random.Generator) -> np.ndarray:
+def scanline_noise(
+    img: np.ndarray, intensity: float, rng: np.random.Generator
+) -> np.ndarray:
     """Add periodic horizontal intensity bands simulating EMI interference.
 
     Args:
@@ -289,7 +301,9 @@ def scanline_noise(img: np.ndarray, intensity: float, rng: np.random.Generator) 
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
-def interlace(img: np.ndarray, intensity: float, rng: np.random.Generator) -> np.ndarray:
+def interlace(
+    img: np.ndarray, intensity: float, rng: np.random.Generator
+) -> np.ndarray:
     """Drop alternating rows and interpolate from neighbours.
 
     Simulates interlaced / field-based capture artefacts.
@@ -316,7 +330,9 @@ def interlace(img: np.ndarray, intensity: float, rng: np.random.Generator) -> np
         # Average of the row above and below
         above = max(0, y - 1)
         below = min(h - 1, y + 1)
-        interpolated = (img[above].astype(np.float32) + img[below].astype(np.float32)) / 2.0
+        interpolated = (
+            img[above].astype(np.float32) + img[below].astype(np.float32)
+        ) / 2.0
         out[y] = img[y].astype(np.float32) * (1 - blend) + interpolated * blend
 
     return np.clip(out, 0, 255).astype(np.uint8)
