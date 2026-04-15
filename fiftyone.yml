@@ -1,0 +1,13 @@
+name: "@Burhan-Q/fo-glitch"
+type: plugin
+author: "Burhan Qaddoumi"
+version: 0.1.0
+license: Apache-2.0
+description: "Glitch augmentation plugin — generate realistic camera corruption artifacts for training data augmentation"
+fiftyone:
+  version: ">=1.14.1"
+operators:
+  - apply_glitch
+  - clean_previews
+panels:
+  - glitch_panel
