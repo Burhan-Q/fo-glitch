@@ -16,8 +16,8 @@ from .config import (
     MODE_LABELS,
     GlitchProfile,
     ModeConfig,
-    NoiseConfig,
     get_dataset_profile,
+    profile_from_params,
     save_dataset_profile,
 )
 from .glitch import generate_preview_base64
@@ -81,26 +81,22 @@ class GlitchPanel(Panel):
 
     def _read_profile(self, ctx) -> GlitchProfile:
         """Reconstruct a GlitchProfile from current panel state."""
-        modes: dict[str, ModeConfig] = {}
+        params: dict[str, object] = {
+            "noise_enabled": ctx.panel.get_state("noise_enabled", False),
+            "noise_scale": ctx.panel.get_state("noise_scale", 10.0),
+            "seed": ctx.panel.get_state("seed"),
+            "filename_suffix": ctx.panel.get_state(
+                "filename_suffix", "_glitch_{TIMESTAMP}"
+            ),
+        }
         for mode_name in GLITCH_MODES:
-            modes[mode_name] = ModeConfig(
-                enabled=bool(ctx.panel.get_state(f"{mode_name}_enabled", False)),
-                intensity=float(ctx.panel.get_state(f"{mode_name}_intensity", 50.0)),
+            params[f"{mode_name}_enabled"] = ctx.panel.get_state(
+                f"{mode_name}_enabled", False
             )
-        seed_raw = ctx.panel.get_state("seed")
-        seed = int(seed_raw) if seed_raw is not None and seed_raw != "" else None
-
-        return GlitchProfile(
-            **modes,
-            noise=NoiseConfig(
-                enabled=bool(ctx.panel.get_state("noise_enabled", False)),
-                scale=float(ctx.panel.get_state("noise_scale", 10.0)),
-            ),
-            seed=seed,
-            filename_suffix=str(
-                ctx.panel.get_state("filename_suffix", "_glitch_{TIMESTAMP}")
-            ),
-        )
+            params[f"{mode_name}_intensity"] = ctx.panel.get_state(
+                f"{mode_name}_intensity", 50.0
+            )
+        return profile_from_params(params)
 
     def _persist(self, ctx) -> None:
         """Save the current panel state to the dataset ExecutionStore."""
@@ -168,24 +164,16 @@ class GlitchPanel(Panel):
         """Clear the preview, then trigger the apply operator."""
         ctx.panel.set_state("preview_data_uri", None)
 
-        # Build flat params for the operator
-        params: dict[str, object] = {}
-        for mode_name in GLITCH_MODES:
-            params[f"{mode_name}_enabled"] = ctx.panel.get_state(
-                f"{mode_name}_enabled",
-                False,
-            )
-            params[f"{mode_name}_intensity"] = ctx.panel.get_state(
-                f"{mode_name}_intensity",
-                50.0,
-            )
-        params["noise_enabled"] = ctx.panel.get_state("noise_enabled", False)
-        params["noise_scale"] = ctx.panel.get_state("noise_scale", 10.0)
-        params["seed"] = ctx.panel.get_state("seed")
-        params["filename_suffix"] = ctx.panel.get_state(
-            "filename_suffix",
-            "_glitch_{TIMESTAMP}",
-        )
+        profile = self._read_profile(ctx)
+        params: dict[str, object] = {
+            "noise_enabled": profile.noise.enabled,
+            "noise_scale": profile.noise.scale,
+            "seed": profile.seed,
+            "filename_suffix": profile.filename_suffix,
+        }
+        for mode_name, mc in profile.mode_configs.items():
+            params[f"{mode_name}_enabled"] = mc.enabled
+            params[f"{mode_name}_intensity"] = mc.intensity
 
         ctx.trigger(
             "@Burhan-Q/fo-glitch/apply_glitch",

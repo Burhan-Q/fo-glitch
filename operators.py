@@ -11,6 +11,7 @@ import fiftyone.operators.types as types
 import numpy as np
 
 from .config import (
+    BLOCK_PATTERNS,
     GLITCH_MODES,
     MODE_DESCRIPTIONS,
     MODE_LABELS,
@@ -64,16 +65,11 @@ class ApplyGlitch(foo.Operator):
         inputs = types.Object()
 
         # -- Corruption modes ----------------------------------------
-        # Checkbox at space=6, intensity at space=6 → same row.
-        # Disabled modes: checkbox only at space=6, so two fit per row.
         inputs.md("### Corruption Modes")
 
         for mode_name in GLITCH_MODES:
             enabled = bool(ctx.params.get(f"{mode_name}_enabled", False))
 
-            # Every mode is always: checkbox(4) + intensity(8) = 12.
-            # The layout never changes regardless of enabled state,
-            # so the grid flow is always predictable.
             inputs.bool(
                 f"{mode_name}_enabled",
                 label=MODE_LABELS[mode_name],
@@ -106,7 +102,7 @@ class ApplyGlitch(foo.Operator):
                 )
 
                 pattern_choices = types.Dropdown()
-                for p in ("uniform", "localized", "streak"):
+                for p in BLOCK_PATTERNS:
                     pattern_choices.add_choice(p, label=p.capitalize())
                 inputs.enum(
                     "block_pattern",
@@ -420,13 +416,7 @@ class ApplyGlitch(foo.Operator):
             return ctx.target_view()
 
         if target == "random_fraction":
-            raw = ctx.params.get("fraction")
-            try:
-                fraction = abs(float(raw)) if raw is not None else 0.1
-            except (TypeError, ValueError):
-                fraction = 0.1
-            if fraction != fraction or fraction == float("inf"):  # NaN/inf
-                fraction = 0.1
+            fraction = _safe_float(ctx.params.get("fraction"), default=0.1)
             fraction = min(max(fraction, 0.01), 1.0)
             count = max(1, int(len(dataset) * fraction))
             return dataset.take(count)

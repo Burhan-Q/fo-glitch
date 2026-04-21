@@ -309,9 +309,7 @@ def channel_shift(
     for ch in range(3):
         dx = int(rng.integers(-max_off, max_off + 1))
         dy = int(rng.integers(-max_off, max_off + 1))
-        plane = img[:, :, ch]
-        shifted = np.roll(np.roll(plane, dx, axis=1), dy, axis=0)
-        out[:, :, ch] = shifted
+        out[:, :, ch] = np.roll(img[:, :, ch], (dy, dx), axis=(0, 1))
 
     return out
 

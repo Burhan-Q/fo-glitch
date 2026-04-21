@@ -245,6 +245,8 @@ MODE_DESCRIPTIONS: dict[str, str] = {
 }
 """Concise tooltip descriptions shown beneath each mode's checkbox."""
 
+BLOCK_PATTERNS: tuple[str, ...] = ("uniform", "localized", "streak")
+"""Valid values for :attr:`GlitchProfile.block_pattern`."""
 
 
 # ---------------------------------------------------------------------------
