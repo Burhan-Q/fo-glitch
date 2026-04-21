@@ -2,10 +2,72 @@
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+
+
+# ---------------------------------------------------------------------------
+# Safe numeric coercion
+# ---------------------------------------------------------------------------
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    """Coerce arbitrary user input to a finite, non-negative float.
+
+    ``None``, NaN, infinity, and unparseable values all map to *default*.
+    Negative numbers are made positive.
+    """
+    if value is None:
+        return default
+    try:
+        f = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(f) or math.isinf(f):
+        return default
+    return abs(f)
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    """Coerce arbitrary user input to a non-negative int.
+
+    ``None``, NaN, infinity, and unparseable values all map to *default*.
+    Negative numbers are made positive.
+    """
+    if value is None:
+        return default
+    try:
+        f = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(f) or math.isinf(f):
+        return default
+    return abs(int(f))
+
+
+def _parse_seed(value: object) -> int | None:
+    """Parse a user-supplied seed value.
+
+    Empty strings, ``None``, NaN, and unparseable values return
+    ``None`` (non-deterministic RNG).  Valid numbers are truncated
+    to int.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+    try:
+        f = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return int(f)
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +92,7 @@ class ModeConfig:
         """Create a ModeConfig from a plain dict, using defaults for missing keys."""
         return cls(
             enabled=bool(data.get("enabled", False)),
-            intensity=float(data.get("intensity", 50.0)),
+            intensity=_safe_float(data.get("intensity"), default=50.0),
         )
 
 
@@ -53,7 +115,7 @@ class NoiseConfig:
         """Create a NoiseConfig from a plain dict, using defaults for missing keys."""
         return cls(
             enabled=bool(data.get("enabled", False)),
-            scale=float(data.get("scale", 10.0)),
+            scale=_safe_float(data.get("scale"), default=10.0),
         )
 
 
@@ -120,8 +182,7 @@ class GlitchProfile:
             else NoiseConfig()
         )
 
-        seed_raw = data.get("seed")
-        seed = int(seed_raw) if seed_raw is not None else None
+        seed = _parse_seed(data.get("seed"))
 
         return cls(
             name=str(data.get("name", "untitled")),
@@ -129,9 +190,9 @@ class GlitchProfile:
             noise=noise,
             seed=seed,
             filename_suffix=str(data.get("filename_suffix", "_glitch_{TIMESTAMP}")),
-            block_size_pct=float(data.get("block_size_pct", 2.0)),
+            block_size_pct=_safe_float(data.get("block_size_pct"), default=2.0),
             block_pattern=str(data.get("block_pattern", "uniform")),
-            block_layers=int(data.get("block_layers", 1)),
+            block_layers=_safe_int(data.get("block_layers"), default=1),
         )
 
     # -- convenience properties ----------------------------------------------
@@ -286,27 +347,18 @@ def profile_from_params(params: dict[str, object]) -> GlitchProfile:
     for mode_name in GLITCH_MODES:
         modes[mode_name] = ModeConfig(
             enabled=bool(params.get(f"{mode_name}_enabled", False)),
-            intensity=float(params.get(f"{mode_name}_intensity", 50.0)),
+            intensity=_safe_float(params.get(f"{mode_name}_intensity"), default=50.0),
         )
-
-    seed_raw = params.get("seed")
-    if isinstance(seed_raw, str):
-        seed_raw = seed_raw.strip()
-        seed_raw = int(seed_raw) if seed_raw else None
-    elif isinstance(seed_raw, (int, float)):
-        seed_raw = int(seed_raw)
-    else:
-        seed_raw = None
 
     return GlitchProfile(
         **modes,
         noise=NoiseConfig(
             enabled=bool(params.get("noise_enabled", False)),
-            scale=float(params.get("noise_scale", 10.0)),
+            scale=_safe_float(params.get("noise_scale"), default=10.0),
         ),
-        seed=seed_raw,
+        seed=_parse_seed(params.get("seed")),
         filename_suffix=str(params.get("filename_suffix", "_glitch_{TIMESTAMP}")),
-        block_size_pct=float(params.get("block_size_pct", 2.0)),
+        block_size_pct=_safe_float(params.get("block_size_pct"), default=2.0),
         block_pattern=str(params.get("block_pattern", "uniform")),
-        block_layers=int(params.get("block_layers", 1)),
+        block_layers=_safe_int(params.get("block_layers"), default=1),
     )

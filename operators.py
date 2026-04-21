@@ -14,6 +14,8 @@ from .config import (
     GLITCH_MODES,
     MODE_DESCRIPTIONS,
     MODE_LABELS,
+    _safe_float,
+    _safe_int,
     expand_suffix,
     profile_from_params,
 )
@@ -82,7 +84,7 @@ class ApplyGlitch(foo.Operator):
             inputs.float(
                 f"{mode_name}_intensity",
                 label="Intensity (%)",
-                default=float(ctx.params.get(f"{mode_name}_intensity", 50.0)),
+                default=_safe_float(ctx.params.get(f"{mode_name}_intensity"), default=50.0),
                 min=0.0,
                 max=100.0,
                 view=types.FieldView(space=8, read_only=not enabled),
@@ -97,7 +99,7 @@ class ApplyGlitch(foo.Operator):
                         "Block edge length as a percentage of the image's "
                         "shorter side. 2% ~= 20 px on a 1024-wide image."
                     ),
-                    default=float(ctx.params.get("block_size_pct", 2.0)),
+                    default=_safe_float(ctx.params.get("block_size_pct"), default=2.0),
                     min=0.5,
                     max=10.0,
                     view=types.FieldView(space=4, descriptionView="tooltip"),
@@ -123,7 +125,7 @@ class ApplyGlitch(foo.Operator):
                         "the configured one; intensity is split across "
                         "layers to keep total density similar."
                     ),
-                    default=int(ctx.params.get("block_layers", 1)),
+                    default=_safe_int(ctx.params.get("block_layers"), default=1),
                     min=1,
                     max=4,
                     view=types.FieldView(space=4, descriptionView="tooltip"),
@@ -182,7 +184,7 @@ class ApplyGlitch(foo.Operator):
             inputs.float(
                 "noise_scale",
                 label="Noise scale (%)",
-                default=float(ctx.params.get("noise_scale", 10.0)),
+                default=_safe_float(ctx.params.get("noise_scale"), default=10.0),
                 min=0.0,
                 max=50.0,
             )
@@ -230,7 +232,7 @@ class ApplyGlitch(foo.Operator):
             inputs.float(
                 "fraction",
                 label="Fraction (0.01–1.00)",
-                default=float(ctx.params.get("fraction", 0.1)),
+                default=_safe_float(ctx.params.get("fraction"), default=0.1),
                 min=0.01,
                 max=1.0,
             )
@@ -418,7 +420,14 @@ class ApplyGlitch(foo.Operator):
             return ctx.target_view()
 
         if target == "random_fraction":
-            fraction = float(ctx.params.get("fraction", 0.1))
+            raw = ctx.params.get("fraction")
+            try:
+                fraction = abs(float(raw)) if raw is not None else 0.1
+            except (TypeError, ValueError):
+                fraction = 0.1
+            if fraction != fraction or fraction == float("inf"):  # NaN/inf
+                fraction = 0.1
+            fraction = min(max(fraction, 0.01), 1.0)
             count = max(1, int(len(dataset) * fraction))
             return dataset.take(count)
 
