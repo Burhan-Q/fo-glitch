@@ -88,6 +88,47 @@ class ApplyGlitch(foo.Operator):
                 view=types.FieldView(space=8, read_only=not enabled),
             )
 
+            # Extra tuning for block corruption — size / pattern / layers
+            if mode_name == "block_corruption" and enabled:
+                inputs.float(
+                    "block_size_pct",
+                    label="Block size (% of image)",
+                    description=(
+                        "Block edge length as a percentage of the image's "
+                        "shorter side. 2% ~= 20 px on a 1024-wide image."
+                    ),
+                    default=float(ctx.params.get("block_size_pct", 2.0)),
+                    min=0.5,
+                    max=10.0,
+                    view=types.FieldView(space=4, descriptionView="tooltip"),
+                )
+
+                pattern_choices = types.Dropdown()
+                for p in ("uniform", "localized", "streak"):
+                    pattern_choices.add_choice(p, label=p.capitalize())
+                inputs.enum(
+                    "block_pattern",
+                    pattern_choices.values(),
+                    default=ctx.params.get("block_pattern", "uniform"),
+                    label="Pattern",
+                    view=types.DropdownView(space=4),
+                )
+
+                inputs.int(
+                    "block_layers",
+                    label="Layers",
+                    description=(
+                        "Number of multi-pass corruption layers (1–4). "
+                        "Each layer uses a different block size around "
+                        "the configured one; intensity is split across "
+                        "layers to keep total density similar."
+                    ),
+                    default=int(ctx.params.get("block_layers", 1)),
+                    min=1,
+                    max=4,
+                    view=types.FieldView(space=4, descriptionView="tooltip"),
+                )
+
         # -- Inline preview ------------------------------------------
         has_enabled = any(ctx.params.get(f"{m}_enabled") for m in GLITCH_MODES)
 

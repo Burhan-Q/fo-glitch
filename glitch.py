@@ -146,33 +146,68 @@ def row_displacement(
     return out
 
 
-def block_corruption(
-    img: np.ndarray, intensity: float, rng: np.random.Generator
+def _block_probs(
+    rows: int,
+    cols: int,
+    base_prob: float,
+    pattern: str,
+    rng: np.random.Generator,
 ) -> np.ndarray:
-    """Scramble, freeze, or zero 16x16 pixel blocks at random positions.
-
-    Simulates H.264/H.265 macro-block corruption from lost I-frames.
+    """Return a (rows, cols) array of per-block corruption probabilities.
 
     Args:
-        img: Input image array, shape (H, W, 3), dtype uint8.
-        intensity: 0–100.  Controls the probability that each block is
-            corrupted.  At 100 roughly half of all blocks are affected.
-        rng: Random generator for block selection and corruption type.
-
-    Returns:
-        New image with corrupted blocks.
+        rows: Number of block rows.
+        cols: Number of block columns.
+        base_prob: Average probability for a block to be corrupted (0–1).
+        pattern: ``"uniform"``, ``"localized"``, or ``"streak"``.
+        rng: Random generator for pattern randomness.
     """
-    out = img.copy()
-    h, w, _ = img.shape
-    block = 16
-    prob = (intensity / 100.0) * 0.5  # max 50 % of blocks
+    if pattern == "localized":
+        cy = int(rng.integers(0, rows))
+        cx = int(rng.integers(0, cols))
+        yy, xx = np.meshgrid(
+            np.arange(rows), np.arange(cols), indexing="ij"
+        )
+        dist = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
+        max_dist = np.sqrt(rows**2 + cols**2) * 0.5
+        falloff = np.clip(1.0 - dist / max_dist, 0.0, 1.0)
+        # 2x boost so average corruption count stays near base_prob
+        return base_prob * falloff * 2.0
+    if pattern == "streak":
+        num = int(rng.integers(1, 4))
+        streak_rows = rng.integers(0, rows, size=num)
+        probs = np.full((rows, cols), base_prob * 0.1)
+        probs[streak_rows, :] = base_prob * 3.0
+        return probs
+    # uniform (default)
+    return np.full((rows, cols), base_prob)
 
+
+def _block_corruption_pass(
+    out: np.ndarray,
+    intensity: float,
+    rng: np.random.Generator,
+    block: int,
+    pattern: str,
+) -> np.ndarray:
+    """Apply a single pass of block corruption with a fixed block size.
+
+    Mutates and returns *out* in place.  Used by :func:`block_corruption`
+    for each layer in a multi-pass run.
+    """
+    h, w, _ = out.shape
     rows = h // block
     cols = w // block
+    if rows == 0 or cols == 0:
+        return out
+
+    base_prob = (intensity / 100.0) * 0.5
+    probs = _block_probs(rows, cols, base_prob, pattern, rng)
+    src = out.copy()  # source for copy-action reads current state
 
     for br in range(rows):
         for bc in range(cols):
-            if rng.random() > prob:
+            if rng.random() > probs[br, bc]:
                 continue
             y0, y1 = br * block, (br + 1) * block
             x0, x1 = bc * block, (bc + 1) * block
@@ -180,11 +215,9 @@ def block_corruption(
             action = rng.integers(0, 3)
             if action == 0:
                 # Copy from a random other block position
-                src_r = rng.integers(0, rows)
-                src_c = rng.integers(0, cols)
-                sy0, sy1 = src_r * block, (src_r + 1) * block
-                sx0, sx1 = src_c * block, (src_c + 1) * block
-                out[y0:y1, x0:x1] = img[sy0:sy1, sx0:sx1]
+                sy0 = int(rng.integers(0, rows)) * block
+                sx0 = int(rng.integers(0, cols)) * block
+                out[y0:y1, x0:x1] = src[sy0 : sy0 + block, sx0 : sx0 + block]
             elif action == 1:
                 # Zero the block (black)
                 out[y0:y1, x0:x1] = 0
@@ -195,7 +228,60 @@ def block_corruption(
                 src_x1 = min(w, x1 + shift)
                 dst_w = src_x1 - src_x0
                 if dst_w > 0:
-                    out[y0:y1, x0 : x0 + dst_w] = img[y0:y1, src_x0:src_x1]
+                    out[y0:y1, x0 : x0 + dst_w] = src[y0:y1, src_x0:src_x1]
+
+    return out
+
+
+def block_corruption(
+    img: np.ndarray,
+    intensity: float,
+    rng: np.random.Generator,
+    size_pct: float = 2.0,
+    pattern: str = "uniform",
+    layers: int = 1,
+) -> np.ndarray:
+    """Scramble, freeze, or zero pixel blocks at random positions.
+
+    Simulates H.264/H.265 macro-block corruption from lost I-frames.
+    Block size is computed as a percentage of ``min(H, W)`` so the
+    effect scales correctly across image resolutions.  When *layers*
+    is greater than 1 the function runs multiple passes at varied
+    sizes (halving and doubling around the configured size), each at
+    reduced intensity, producing overlapping corruption that mimics
+    real codec behaviour with hierarchical block sizes.
+
+    Args:
+        img: Input image array, shape (H, W, 3), dtype uint8.
+        intensity: 0–100.  Average probability that each block is
+            corrupted (at 100, uniform pattern hits ~50 % of blocks).
+            In multi-pass mode the intensity is divided across layers.
+        rng: Random generator for block selection and corruption type.
+        size_pct: Block size as a percentage of ``min(H, W)``.  A value
+            of 2.0 means blocks are ~2 % of the image's shorter side.
+        pattern: Spatial distribution of corruption — ``"uniform"``
+            (even), ``"localized"`` (clustered around a random point),
+            or ``"streak"`` (concentrated on random horizontal bands).
+        layers: Number of corruption passes (1–4).  Each layer uses a
+            different block size spread around *size_pct* and receives
+            ``intensity / layers`` so cumulative density stays sane.
+
+    Returns:
+        New image with corrupted blocks.
+    """
+    out = img.copy()
+    h, w, _ = out.shape
+    base_px = max(2, int(min(h, w) * size_pct / 100.0))
+
+    layers = max(1, min(int(layers), 4))
+    per_pass_intensity = intensity / layers
+
+    # Layer size factors spread around 1x: for layers=1 just [1x]; for
+    # layers=3 [0.5x, 1x, 2x]; for layers=4 [0.5x, ~0.8x, ~1.3x, 2x].
+    for i in range(layers):
+        factor = 2.0 ** (i - (layers - 1) / 2.0)
+        block_px = max(2, int(base_px * factor))
+        _block_corruption_pass(out, per_pass_intensity, rng, block_px, pattern)
 
     return out
 
@@ -386,7 +472,17 @@ def apply_profile(
             intensity = float(np.clip(intensity + jitter, 0.0, 100.0))
 
         applied_params[mode_name] = round(intensity, 4)
-        img = GLITCH_FUNCTIONS[mode_name](img, intensity, rng)
+        if mode_name == "block_corruption":
+            img = block_corruption(
+                img,
+                intensity,
+                rng,
+                size_pct=profile.block_size_pct,
+                pattern=profile.block_pattern,
+                layers=profile.block_layers,
+            )
+        else:
+            img = GLITCH_FUNCTIONS[mode_name](img, intensity, rng)
 
     return img, applied_params
 

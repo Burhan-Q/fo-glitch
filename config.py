@@ -89,6 +89,11 @@ class GlitchProfile:
     seed: int | None = None
     filename_suffix: str = "_glitch_{TIMESTAMP}"
 
+    # Block-corruption tuning (applies only when block_corruption is enabled)
+    block_size_pct: float = 2.0  # block edge as % of min(H, W), 0.5–10
+    block_pattern: str = "uniform"  # "uniform" | "localized" | "streak"
+    block_layers: int = 1  # multi-pass count (1–4) at varied sizes
+
     # -- serialization -------------------------------------------------------
 
     def to_dict(self) -> dict[str, object]:
@@ -124,6 +129,9 @@ class GlitchProfile:
             noise=noise,
             seed=seed,
             filename_suffix=str(data.get("filename_suffix", "_glitch_{TIMESTAMP}")),
+            block_size_pct=float(data.get("block_size_pct", 2.0)),
+            block_pattern=str(data.get("block_pattern", "uniform")),
+            block_layers=int(data.get("block_layers", 1)),
         )
 
     # -- convenience properties ----------------------------------------------
@@ -298,4 +306,7 @@ def profile_from_params(params: dict[str, object]) -> GlitchProfile:
         ),
         seed=seed_raw,
         filename_suffix=str(params.get("filename_suffix", "_glitch_{TIMESTAMP}")),
+        block_size_pct=float(params.get("block_size_pct", 2.0)),
+        block_pattern=str(params.get("block_pattern", "uniform")),
+        block_layers=int(params.get("block_layers", 1)),
     )
