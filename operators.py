@@ -12,11 +12,12 @@ import numpy as np
 
 from .config import (
     GLITCH_MODES,
+    MODE_DESCRIPTIONS,
     MODE_LABELS,
     expand_suffix,
     profile_from_params,
 )
-from .glitch import apply_profile, load_image, save_image
+from .glitch import apply_profile, generate_preview_image, load_image, save_image
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +75,9 @@ class ApplyGlitch(foo.Operator):
             inputs.bool(
                 f"{mode_name}_enabled",
                 label=MODE_LABELS[mode_name],
+                description=MODE_DESCRIPTIONS[mode_name],
                 default=enabled,
-                view=types.CheckboxView(space=4),
+                view=types.CheckboxView(space=4, descriptionView="tooltip"),
             )
             inputs.float(
                 f"{mode_name}_intensity",
@@ -93,17 +95,23 @@ class ApplyGlitch(foo.Operator):
         inputs.bool(
             "show_preview",
             label="Show preview",
-            description=("Render a glitched preview of the selected sample"),
+            description="Render a glitched preview of the selected sample",
             default=bool(ctx.params.get("show_preview", False)),
+            view=types.SwitchView(descriptionView="tooltip"),
         )
 
         if ctx.params.get("show_preview") and has_enabled:
             preview_path = self._generate_preview_file(ctx)
             if preview_path is not None:
-                # Serve through FiftyOne's /media endpoint
+                # Serve through FiftyOne's /media endpoint with a
+                # cache-busting token based on the file's mtime, so
+                # updates bypass the browser image cache.
                 from urllib.parse import quote
 
-                media_url = f"/media?filepath={quote(preview_path)}"
+                mtime = int(os.path.getmtime(preview_path) * 1000)
+                media_url = (
+                    f"/media?filepath={quote(preview_path)}&v={mtime}"
+                )
                 inputs.define_property(
                     "preview_image",
                     types.String(),
@@ -115,7 +123,7 @@ class ApplyGlitch(foo.Operator):
                     "no_sample_warning",
                     types.Warning(
                         label="No sample available",
-                        description=("Select a sample in the grid to preview."),
+                        description="Select a sample in the grid to preview.",
                     ),
                 )
 
@@ -125,8 +133,9 @@ class ApplyGlitch(foo.Operator):
         inputs.bool(
             "noise_enabled",
             label="Enable noise injection",
-            description=("Jitter each mode's intensity per sample so results vary"),
+            description="Jitter each mode's intensity per sample so results vary",
             default=bool(ctx.params.get("noise_enabled", False)),
+            view=types.CheckboxView(descriptionView="tooltip"),
         )
         if ctx.params.get("noise_enabled"):
             inputs.float(
@@ -220,8 +229,8 @@ class ApplyGlitch(foo.Operator):
             "delegate",
             default=False,
             label="Delegate execution?",
-            description=("Run in the background (recommended for large targets)"),
-            view=types.CheckboxView(),
+            description="Run in the background (recommended for large targets)",
+            view=types.CheckboxView(descriptionView="tooltip"),
         )
 
         return types.Property(inputs)
@@ -330,11 +339,11 @@ class ApplyGlitch(foo.Operator):
     # ---------------------------------------------------------------
 
     def _generate_preview_file(self, ctx) -> str | None:
-        """Generate a glitched preview image and write it to a temp file.
+        """Generate a glitched preview image and write it next to the source.
 
-        The file is written to ``/tmp`` and overwritten on each call.
-        It is never added to the dataset.  Returns the file path, or
-        ``None`` if no sample is available.
+        Uses a fixed filename that is overwritten on each call.  Never
+        added to the dataset.  Returns the file path, or ``None`` if no
+        sample is available.
         """
         sample_id = _resolve_sample_id(ctx)
         if sample_id is None:
@@ -342,32 +351,11 @@ class ApplyGlitch(foo.Operator):
 
         sample: fo.Sample = ctx.dataset[sample_id]
         profile = profile_from_params(ctx.params)
+        corrupted = generate_preview_image(sample.filepath, profile, profile.seed)
 
-        img = load_image(sample.filepath)
-
-        # Downscale for speed
-        from PIL import Image as PILImage
-
-        h, w = img.shape[:2]
-        max_dim = 512
-        ratio = min(max_dim / max(h, w), 1.0)
-        if ratio < 1.0:
-            new_h, new_w = int(h * ratio), int(w * ratio)
-            pil = PILImage.fromarray(img).resize(
-                (new_w, new_h),
-                PILImage.LANCZOS,
-            )
-            img = np.asarray(pil, dtype=np.uint8)
-
-        rng = np.random.default_rng(
-            profile.seed if profile.seed is not None else None,
+        preview_path = str(
+            Path(sample.filepath).parent / ".fo_glitch_preview.jpg"
         )
-        corrupted, _ = apply_profile(img, profile, rng)
-
-        # Write next to the source file so FiftyOne's media server can
-        # serve it.  Uses a fixed name that gets overwritten each time.
-        src_dir = str(Path(sample.filepath).parent)
-        preview_path = str(Path(src_dir) / ".fo_glitch_preview.jpg")
         save_image(corrupted, preview_path)
         return preview_path
 

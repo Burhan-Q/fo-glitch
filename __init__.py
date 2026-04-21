@@ -21,6 +21,7 @@ from .config import (
     save_dataset_profile,
 )
 from .glitch import generate_preview_base64
+from .operators import ApplyGlitch, CleanPreviews, _resolve_sample_id
 
 
 class GlitchPanel(Panel):
@@ -144,7 +145,7 @@ class GlitchPanel(Panel):
         It exists only in transient panel state and is discarded when the
         panel closes, the dataset changes, or Apply is clicked.
         """
-        sample_id = self._resolve_sample_id(ctx)
+        sample_id = _resolve_sample_id(ctx)
         if sample_id is None:
             ctx.panel.set_state("preview_data_uri", None)
             ctx.ops.notify(
@@ -312,26 +313,9 @@ class GlitchPanel(Panel):
 
         return types.Property(panel)
 
-    # -- internal helpers ----------------------------------------------------
-
-    def _resolve_sample_id(self, ctx) -> str | None:
-        """Return the ID of the sample to preview.
-
-        Prefers the first selected sample, then the first sample in the
-        current view.
-        """
-        if ctx.selected:
-            return ctx.selected[0]
-        view = ctx.view
-        if view and len(view) > 0:
-            return view.first().id
-        return None
-
 
 def register(p: foo.PluginContext) -> None:
     """Register all plugin components with FiftyOne."""
-    from .operators import ApplyGlitch, CleanPreviews
-
     p.register(GlitchPanel)
     p.register(ApplyGlitch)
     p.register(CleanPreviews)

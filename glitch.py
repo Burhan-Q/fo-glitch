@@ -12,13 +12,12 @@ from __future__ import annotations
 
 import base64
 import io
-from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
-from .config import GLITCH_MODES, GlitchProfile, ModeConfig
+from .config import GLITCH_MODES, GlitchProfile
 
 # ---------------------------------------------------------------------------
 # I/O helpers
@@ -104,13 +103,10 @@ def _contiguous_spans(mask: np.ndarray) -> list[tuple[int, int]]:
 
     Returns a list of ``(start, end)`` index pairs (end is exclusive).
     """
-    spans: list[tuple[int, int]] = []
     diff = np.diff(mask.astype(np.int8), prepend=0, append=0)
     starts = np.where(diff == 1)[0]
     ends = np.where(diff == -1)[0]
-    for s, e in zip(starts, ends):
-        spans.append((int(s), int(e)))
-    return spans
+    return [(int(s), int(e)) for s, e in zip(starts, ends)]
 
 
 def row_displacement(
@@ -304,47 +300,38 @@ def scanline_noise(
 def interlace(
     img: np.ndarray, intensity: float, rng: np.random.Generator
 ) -> np.ndarray:
-    """Drop alternating rows and interpolate from neighbours.
+    """Darken alternating rows to produce visible scan-line artefacts.
 
-    Simulates interlaced / field-based capture artefacts.
+    Simulates interlaced / field-based capture artefacts.  At low
+    intensity the effect is subtle; at high intensity alternate rows
+    are strongly darkened, creating the classic comb / scan-line look.
 
     Args:
         img: Input image array, shape (H, W, 3), dtype uint8.
-        intensity: 0–100.  Controls the blend factor between original and
-            interpolated rows.  At 0 no change; at 100 dropped rows are
-            fully replaced by neighbour averages.
+        intensity: 0–100.  Controls how much alternate rows are
+            darkened.  At 0 no change; at 100 dropped rows are reduced
+            to ~15 % of original brightness.
         rng: Random generator for field selection (odd / even).
 
     Returns:
         New image with interlacing artefacts.
     """
-    out = img.copy().astype(np.float32)
-    h, w, _ = img.shape
-    blend = intensity / 100.0
-
-    # Choose which field to drop (odd or even rows)
+    out = img.copy()
     drop_odd = bool(rng.integers(0, 2))
     start = 1 if drop_odd else 0
 
-    for y in range(start, h, 2):
-        # Average of the row above and below
-        above = max(0, y - 1)
-        below = min(h - 1, y + 1)
-        interpolated = (
-            img[above].astype(np.float32) + img[below].astype(np.float32)
-        ) / 2.0
-        out[y] = img[y].astype(np.float32) * (1 - blend) + interpolated * blend
-
-    return np.clip(out, 0, 255).astype(np.uint8)
+    # At intensity=100, alternate rows retain 15% brightness (~85% darken)
+    factor = 1.0 - (intensity / 100.0) * 0.85
+    darkened = (out[start::2].astype(np.float32) * factor).clip(0, 255)
+    out[start::2] = darkened.astype(np.uint8)
+    return out
 
 
 # ---------------------------------------------------------------------------
 # Function registry
 # ---------------------------------------------------------------------------
 
-GlitchFunction = Callable[[np.ndarray, float, np.random.Generator], np.ndarray]
-
-GLITCH_FUNCTIONS: dict[str, GlitchFunction] = {
+GLITCH_FUNCTIONS = {
     "pixel_sort": pixel_sort,
     "row_displacement": row_displacement,
     "block_corruption": block_corruption,
@@ -386,7 +373,7 @@ def apply_profile(
     applied_params: dict[str, float] = {}
 
     for mode_name in GLITCH_MODES:
-        mode_cfg: ModeConfig = profile.mode_configs[mode_name]
+        mode_cfg = profile.mode_configs[mode_name]
         if not mode_cfg.enabled:
             continue
 
@@ -409,6 +396,36 @@ def apply_profile(
 # ---------------------------------------------------------------------------
 
 
+def generate_preview_image(
+    filepath: str | Path,
+    profile: GlitchProfile,
+    seed: int | None,
+    max_dim: int = 512,
+) -> np.ndarray:
+    """Load, downscale, and corrupt an image for preview.
+
+    Args:
+        filepath: Path to the source image on disk.
+        profile: The glitch profile to apply.
+        seed: Base seed for the RNG (``None`` for non-deterministic).
+        max_dim: Maximum pixel dimension (width or height) of the result.
+
+    Returns:
+        Corrupted image array, shape (H, W, 3), dtype uint8.
+    """
+    img = load_image(filepath)
+    h, w = img.shape[:2]
+    ratio = min(max_dim / max(h, w), 1.0)
+    if ratio < 1.0:
+        new_h, new_w = int(h * ratio), int(w * ratio)
+        pil = Image.fromarray(img).resize((new_w, new_h), Image.LANCZOS)
+        img = np.asarray(pil, dtype=np.uint8)
+
+    rng = np.random.default_rng(seed)
+    corrupted, _ = apply_profile(img, profile, rng)
+    return corrupted
+
+
 def generate_preview_base64(
     filepath: str | Path,
     profile: GlitchProfile,
@@ -418,35 +435,19 @@ def generate_preview_base64(
 ) -> str:
     """Generate a base64-encoded JPEG preview of a glitched image.
 
-    The source image is downscaled to *max_dim* pixels on its longest
-    side before corruption is applied, keeping preview generation fast
-    and the resulting base64 payload small (~30–60 KB).
+    Payload is typically ~30–60 KB.
 
     Args:
         filepath: Path to the source image on disk.
         profile: The glitch profile to apply.
         seed: Base seed for the RNG (``None`` for non-deterministic).
-        max_dim: Maximum pixel dimension (width or height) for the
-            preview thumbnail.
+        max_dim: Maximum pixel dimension (width or height).
         quality: JPEG quality for the encoded output (1–95).
 
     Returns:
-        A complete ``data:image/jpeg;base64,...`` URI string suitable
-        for embedding in markdown or HTML ``<img>`` tags.
+        A ``data:image/jpeg;base64,...`` URI string.
     """
-    img = load_image(filepath)
-
-    # Downscale for speed and payload size
-    h, w = img.shape[:2]
-    ratio = min(max_dim / max(h, w), 1.0)
-    if ratio < 1.0:
-        new_h, new_w = int(h * ratio), int(w * ratio)
-        pil = Image.fromarray(img).resize((new_w, new_h), Image.LANCZOS)
-        img = np.asarray(pil, dtype=np.uint8)
-
-    rng = np.random.default_rng(seed if seed is not None else None)
-    corrupted, _ = apply_profile(img, profile, rng)
-
+    corrupted = generate_preview_image(filepath, profile, seed, max_dim)
     buf = io.BytesIO()
     Image.fromarray(corrupted).save(buf, format="JPEG", quality=quality)
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
