@@ -163,18 +163,19 @@ MODE_LABELS: dict[str, str] = {
     "scanline_noise": "Scan Line Noise",
     "interlace": "Interlacing",
 }
-"""Human-readable labels for the panel UI."""
+"""Human-readable labels for the UI."""
 
 MODE_DESCRIPTIONS: dict[str, str] = {
-    "pixel_sort": "Sort pixels within rows by luminance between thresholds",
-    "row_displacement": "Shift rows horizontally by random offsets",
-    "block_corruption": "Scramble 16x16 pixel blocks to wrong positions",
-    "channel_shift": "Offset R/G/B planes by different pixel amounts",
-    "frame_tear": "Composite image halves at different horizontal offsets",
-    "scanline_noise": "Add periodic horizontal intensity bands",
-    "interlace": "Drop alternating rows and interpolate",
+    "pixel_sort": "Sorts contiguous pixel runs within each row by brightness (classic pixel-sort glitch art)",
+    "row_displacement": "Shifts each row horizontally by a random offset (scan-line jitter / signal timing errors)",
+    "block_corruption": "Scrambles, freezes, or zeroes 16x16 blocks (H.264/H.265 macro-block corruption)",
+    "channel_shift": "Offsets the R/G/B planes in different directions (chroma sub-sampling errors)",
+    "frame_tear": "Splits the image at random y-coordinates and offsets the halves (torn frames / vsync loss)",
+    "scanline_noise": "Adds periodic horizontal intensity bands (EMI interference patterns)",
+    "interlace": "Darkens alternating rows to produce scan-line / comb artefacts (field-based capture)",
 }
-"""Tooltip descriptions shown next to each mode in the UI."""
+"""Concise tooltip descriptions shown beneath each mode's checkbox."""
+
 
 
 # ---------------------------------------------------------------------------
