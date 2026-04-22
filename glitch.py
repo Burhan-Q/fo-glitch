@@ -112,29 +112,38 @@ def _contiguous_spans(mask: np.ndarray) -> list[tuple[int, int]]:
 def row_displacement(
     img: np.ndarray, intensity: float, rng: np.random.Generator
 ) -> np.ndarray:
-    """Shift each row horizontally by a random offset.
+    """Shift a subset of rows horizontally by random offsets.
 
-    Simulates scan-line displacement / signal timing errors.
+    Simulates scan-line displacement / signal timing errors.  Both the
+    *fraction* of rows that get shifted and the *magnitude* of each
+    shift scale linearly with intensity, so the effect grows smoothly
+    from subtle (a few rows shift by 1 px) to extreme (every row
+    shifts by up to ~10 % of image width).
 
     Args:
         img: Input image array, shape (H, W, 3), dtype uint8.
-        intensity: 0–100.  Maps to the maximum horizontal pixel offset.
-            At 100 the max offset is ~10 % of image width.
-        rng: Random generator for per-row offsets.
+        intensity: 0–100.  At 0 no rows move; at 100 every row is
+            shifted by up to ~10 % of image width.
+        rng: Random generator for row selection and offsets.
 
     Returns:
         New image with shifted rows (edges filled with black).
     """
     out = img.copy()
     h, w, _ = img.shape
-    max_offset = int(w * (intensity / 100.0) * 0.1)
-    if max_offset < 1:
-        return out
+
+    t = intensity / 100.0
+    # At low intensity, shift only a few rows by 1 px (subtle).  As
+    # intensity rises, both the affected fraction and the max offset
+    # grow linearly, avoiding the threshold-pop behaviour of a purely
+    # magnitude-based scaling.
+    max_offset = max(1, int(round(w * t * 0.1)))
+    selected = rng.random(h) < t
 
     offsets = rng.integers(-max_offset, max_offset + 1, size=h)
     for y in range(h):
         off = int(offsets[y])
-        if off == 0:
+        if not selected[y] or off == 0:
             continue
         out[y] = np.roll(img[y], off, axis=0)
         # Fill wrapped pixels with black
@@ -459,6 +468,13 @@ def apply_profile(
     for mode_name in GLITCH_MODES:
         mode_cfg = profile.mode_configs[mode_name]
         if not mode_cfg.enabled:
+            continue
+
+        # Skip modes with zero intensity (cleared field or explicit 0).
+        # A checkbox toggled on but with no intensity value means the
+        # user wanted this mode disabled — don't silently substitute
+        # a default.
+        if mode_cfg.intensity <= 0:
             continue
 
         intensity = mode_cfg.intensity

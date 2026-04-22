@@ -89,10 +89,14 @@ class ModeConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, bool | float]) -> ModeConfig:
-        """Create a ModeConfig from a plain dict, using defaults for missing keys."""
+        """Create a ModeConfig from a plain dict.
+
+        Missing / None / NaN intensity becomes 0.0, which signals
+        ``apply_profile`` to skip this mode entirely.
+        """
         return cls(
             enabled=bool(data.get("enabled", False)),
-            intensity=_safe_float(data.get("intensity"), default=50.0),
+            intensity=_safe_float(data.get("intensity"), default=0.0),
         )
 
 
@@ -349,7 +353,9 @@ def profile_from_params(params: dict[str, object]) -> GlitchProfile:
     for mode_name in GLITCH_MODES:
         modes[mode_name] = ModeConfig(
             enabled=bool(params.get(f"{mode_name}_enabled", False)),
-            intensity=_safe_float(params.get(f"{mode_name}_intensity"), default=50.0),
+            # None / NaN / cleared field → 0.0, which means "skip this mode"
+            # (see apply_profile).  No silent default fallback.
+            intensity=_safe_float(params.get(f"{mode_name}_intensity"), default=0.0),
         )
 
     return GlitchProfile(
