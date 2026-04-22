@@ -382,40 +382,6 @@ def expand_suffix(template: str, profile: GlitchProfile, index: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# ExecutionStore helpers
-# ---------------------------------------------------------------------------
-
-_STORE_VERSION = "v1"
-
-
-def _store_key(dataset_id: str) -> str:
-    """Build a dataset-scoped store key for profile persistence."""
-    return f"glitch_panel_{dataset_id}_{_STORE_VERSION}"
-
-
-def get_dataset_profile(ctx: object) -> GlitchProfile:
-    """Load the current glitch profile from dataset-scoped ExecutionStore.
-
-    Returns a default :class:`GlitchProfile` if nothing is stored yet.
-    """
-    try:
-        data = ctx.store(_store_key(ctx.dataset._doc.id)).get("profile")  # type: ignore[attr-defined]
-        if isinstance(data, dict):
-            return GlitchProfile.from_dict(data)
-    except Exception:
-        pass
-    return GlitchProfile()
-
-
-def save_dataset_profile(ctx: object, profile: GlitchProfile) -> None:
-    """Persist a :class:`GlitchProfile` to the dataset-scoped ExecutionStore."""
-    try:
-        ctx.store(_store_key(ctx.dataset._doc.id)).set("profile", profile.to_dict())  # type: ignore[attr-defined]
-    except Exception:
-        pass
-
-
-# ---------------------------------------------------------------------------
 # Flat-params ↔ GlitchProfile conversion (for operator forms)
 # ---------------------------------------------------------------------------
 
@@ -426,16 +392,7 @@ def profile_from_params(params: dict[str, object]) -> GlitchProfile:
     The operator form stores each mode as ``{mode}_enabled`` and
     ``{mode}_intensity`` at the top level of *params*.  Noise, seed, and
     suffix live under their own top-level keys.
-
-    Falls back to ``GlitchProfile.from_dict(params.get("profile"))`` if
-    a nested profile dict is present (backwards-compatible with the panel
-    trigger path).
     """
-    # If a nested profile dict was passed (panel trigger), prefer it
-    nested = params.get("profile")
-    if isinstance(nested, dict) and any(m in nested for m in GLITCH_MODES):
-        return GlitchProfile.from_dict(nested)
-
     modes: dict[str, ModeConfig] = {}
     for mode_name in GLITCH_MODES:
         modes[mode_name] = ModeConfig(

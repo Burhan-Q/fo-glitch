@@ -10,8 +10,6 @@ per-sample random generator for deterministic reproducibility.
 
 from __future__ import annotations
 
-import base64
-import io
 from pathlib import Path
 
 import numpy as np
@@ -534,31 +532,3 @@ def generate_preview_image(
     rng = np.random.default_rng(seed)
     corrupted, _ = apply_profile(img, profile, rng)
     return corrupted
-
-
-def generate_preview_base64(
-    filepath: str | Path,
-    profile: GlitchProfile,
-    seed: int | None,
-    max_dim: int = 512,
-    quality: int = 70,
-) -> str:
-    """Generate a base64-encoded JPEG preview of a glitched image.
-
-    Payload is typically ~30–60 KB.
-
-    Args:
-        filepath: Path to the source image on disk.
-        profile: The glitch profile to apply.
-        seed: Base seed for the RNG (``None`` for non-deterministic).
-        max_dim: Maximum pixel dimension (width or height).
-        quality: JPEG quality for the encoded output (1–95).
-
-    Returns:
-        A ``data:image/jpeg;base64,...`` URI string.
-    """
-    corrupted = generate_preview_image(filepath, profile, seed, max_dim)
-    buf = io.BytesIO()
-    Image.fromarray(corrupted).save(buf, format="JPEG", quality=quality)
-    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    return f"data:image/jpeg;base64,{b64}"
