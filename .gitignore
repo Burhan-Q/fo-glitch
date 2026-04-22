@@ -2,6 +2,7 @@ __pycache__/
 .ref/
 .env
 .playwright-mcp/
+.tests/
 
 *.png
 

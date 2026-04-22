@@ -93,6 +93,10 @@ Flip **Show preview** to render a glitched version of the first selected sample 
 
   Any other `{...}` token (`{FOO}`, `{1234}`, `{AB !@}`, etc.) is flagged with an inline warning and **stripped** from the output filename at execute time. Output files are saved **alongside the source image**, using the pattern `{original_stem}{expanded_suffix}{ext}`.
 
+  An additional warning appears when the suffix contains `{MODE}` and three or more corruption modes are enabled at once: the joined mode list can push the final filename close to the 255-byte filesystem name limit. Either drop `{MODE}` from the suffix or enable fewer modes per run.
+
+  **Character set / OS assumptions**: filenames are assumed to be standard ASCII, and source directories are assumed to be writable. If write fails for a given sample (permissions, disk full, path-length overflow) the error is logged to the FiftyOne server log and the batch continues; skipped samples are reported in the operator's completion notice and output summary.
+
 ### 6. Pick a target and execute
 
 Choose **Augment Samples** from:
@@ -103,7 +107,7 @@ Choose **Augment Samples** from:
 | Samples with tag(s) | Multi-select a set of sample tags; matches `match_tags` |
 | Current view | The active view / filter (default) |
 | Saved view | A dataset-saved view selected by name |
-| Random fraction of dataset | Random subset sized by the fraction slider (0.01–1.00) |
+| Random fraction of dataset | Random subset sized by the fraction field (0.01–1.00) |
 | Entire dataset | All samples |
 
 When the resolved target exceeds the delegation threshold (default 100 samples; see below), a notice appears recommending **Schedule** instead of **Execute**. Use the button's ▾ menu to choose.
@@ -145,6 +149,22 @@ the plugin produces byte-identical output. Each sample's per-sample RNG is `nump
 | Operator | Description | Listed |
 |----------|-------------|--------|
 | `apply_glitch` | Configure, preview, and apply glitch augmentation | Yes |
+
+## History
+
+Version numbers track `pyproject.toml`.  Dates are the day the change landed on `main`.
+
+### 0.1.0 (2026-04-22) — current
+
+- **Plugin surface consolidated.** The standalone *Glitch Configurator* panel was removed so the plugin has a single UI entry point: the `Apply Glitch Augmentations` operator form. A panel had been prototyped for per-dataset profile persistence; maintaining two parallel interfaces with the same fields created drift risk and was dropped in favor of the operator form alone.
+- **Filename-suffix input validation.** The suffix field now accepts arbitrary `{...}` tokens and flags any unrecognized ones inline; unknown tokens are stripped at execute time. A second inline warning fires when `{MODE}` is combined with three or more enabled modes to flag filename-length risk.
+- **Preview inlined in the operator form.** A `Show preview` switch renders a glitched sample directly inside the form using FiftyOne's `/media` endpoint. The hidden preview file is cleaned up at the end of execute (success or empty target); dismissing the dialog may leave at most one orphan per source directory, overwritten on the next preview.
+- **Target selection expanded.** Added *Selected sample(s)* and *Samples with tag(s)* to the existing view-based target choices.
+- **Delegation recommendation** for large targets driven by `FO_GLITCH_DELEGATE_THRESHOLD` (default 100) — the form shows a notice recommending `Schedule` instead of `Execute` rather than auto-delegating.
+- **Engine correctness fixes.** `0`/`None` intensity skips the mode entirely; row-displacement intensity scaling rebuilt as a probability mask to eliminate step discontinuity; interlacing reworked to darken alternating rows (previous implementation was a no-op on static images); block corruption gained size (% of image), pattern, and multi-pass layer tuning.
+- **Removed dead code.** The `CleanPreviews` utility and the `{PROFILE}` filename placeholder were both removed — neither had a reachable write path in the current code.
+- **Internal refactor.** `resolve_input` split into per-section `_render_*` helpers; `_safe_float`/`_safe_int` collapsed onto a shared `_coerce_number` helper; `GlitchProfile.name` field dropped alongside `{PROFILE}`.
+- **Dependencies declared explicitly.** `numpy>=2.4.4` and `Pillow>=12.2.0` are now listed in `pyproject.toml` rather than relied on transitively via `fiftyone`.
 
 ## Roadmap
 
