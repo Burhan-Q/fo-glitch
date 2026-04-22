@@ -129,7 +129,6 @@ class GlitchProfile:
     """Complete glitch configuration — all modes, noise, seed, and naming.
 
     Attributes:
-        name: Profile name (for future save/export).
         pixel_sort: Brightness-based row pixel sorting.
         row_displacement: Horizontal row offset (scan-line displacement).
         block_corruption: 16x16 macro-block scrambling (H.264 artifact).
@@ -141,10 +140,9 @@ class GlitchProfile:
         seed: Base seed for reproducibility (``None`` = random).
         filename_suffix: Template appended to source basename.
             Supports placeholders: ``{TIMESTAMP}``, ``{DATETIME}``,
-            ``{DATE}``, ``{INDEX}``, ``{PROFILE}``, ``{MODE}``.
+            ``{DATE}``, ``{INDEX}``, ``{MODE}``.
     """
 
-    name: str = "untitled"
     pixel_sort: ModeConfig = field(default_factory=ModeConfig)
     row_displacement: ModeConfig = field(default_factory=ModeConfig)
     block_corruption: ModeConfig = field(default_factory=ModeConfig)
@@ -190,7 +188,6 @@ class GlitchProfile:
         seed = _parse_seed(data.get("seed"))
 
         return cls(
-            name=str(data.get("name", "untitled")),
             **mode_kwargs,
             noise=noise,
             seed=seed,
@@ -307,10 +304,10 @@ BLOCK_PATTERNS: tuple[str, ...] = ("uniform", "localized", "streak")
 
 _UNSAFE_FILENAME_RE = re.compile(r"[^\w\-.,]")
 
-VALID_PLACEHOLDERS: frozenset[str] = frozenset(
-    {"TIMESTAMP", "DATETIME", "DATE", "INDEX", "PROFILE", "MODE"}
+VALID_PLACEHOLDERS: tuple[str, ...] = (
+    "TIMESTAMP", "DATETIME", "DATE", "INDEX", "MODE",
 )
-"""The set of placeholder names recognized by :func:`expand_suffix`."""
+"""The placeholder names recognized by :func:`expand_suffix`, in UI order."""
 
 # Matches any {...} token. ``[^{}]*`` keeps the match anchored to a single
 # pair of braces, so ``{LABEL}``, ``{1234}``, ``{AB-!@ 12}``, and even ``{}``
@@ -318,8 +315,7 @@ VALID_PLACEHOLDERS: frozenset[str] = frozenset(
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 
 VALID_PLACEHOLDERS_HINT: str = ", ".join(
-    "{" + p + "}"
-    for p in ("TIMESTAMP", "DATETIME", "DATE", "INDEX", "PROFILE", "MODE")
+    "{" + p + "}" for p in VALID_PLACEHOLDERS
 )
 """Pre-formatted comma-separated list of valid placeholders for UI strings."""
 
@@ -336,11 +332,12 @@ def find_unknown_placeholders(template: str) -> list[str]:
     braces), in order of first occurrence and de-duplicated, so the UI can
     show the user precisely what they typed.
     """
+    valid = set(VALID_PLACEHOLDERS)
     seen: set[str] = set()
     unknown: list[str] = []
     for match in _PLACEHOLDER_RE.finditer(template or ""):
         token = match.group(0)
-        if match.group(1) in VALID_PLACEHOLDERS or token in seen:
+        if match.group(1) in valid or token in seen:
             continue
         seen.add(token)
         unknown.append(token)
@@ -371,7 +368,6 @@ def expand_suffix(template: str, profile: GlitchProfile, index: int) -> str:
         "DATETIME": now.strftime("%Y-%m-%dT%H-%M-%S"),
         "DATE": now.strftime("%Y-%m-%d"),
         "INDEX": f"{index:03d}",
-        "PROFILE": _sanitize_for_filename(profile.name),
         "MODE": _sanitize_for_filename(",".join(enabled)) if enabled else "none",
     }
 
