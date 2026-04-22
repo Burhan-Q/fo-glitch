@@ -1,9 +1,10 @@
-"""Operators for previewing and applying glitch augmentations."""
+"""Operator for configuring, previewing, and applying glitch augmentations."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 import fiftyone as fo
 import fiftyone.operators as foo
@@ -27,17 +28,20 @@ from .config import (
 from .glitch import apply_profile, generate_preview_image, load_image, save_image
 
 
-# ---------------------------------------------------------------------------
-# Apply operator (unified: configure + inline preview + apply)
-# ---------------------------------------------------------------------------
+# On-disk name for the transient operator-form preview image.  Written
+# next to the source sample and overwritten on each preview generation.
+_PREVIEW_FILENAME = ".fo_glitch_preview.jpg"
 
 
 class ApplyGlitch(foo.Operator):
     """Configure and apply glitch augmentation to dataset samples.
 
     A single self-contained operator form with inline preview.  The
-    preview renders as a base64 image directly inside the dialog — no
-    view changes, no dataset modifications, fully ephemeral.
+    preview is written to a hidden file next to the source sample and
+    served through FiftyOne's ``/media`` endpoint.  The file is removed
+    at the end of :meth:`execute`; dismissing the dialog without running
+    may leave at most one orphan per source directory, which is
+    overwritten on the next preview.
     """
 
     @property
@@ -55,25 +59,37 @@ class ApplyGlitch(foo.Operator):
         )
 
     # ---------------------------------------------------------------
-    # Input form
+    # Input form — split into per-section helpers for readability.
+    # resolve_input orchestrates; each _render_* appends to *inputs*.
     # ---------------------------------------------------------------
 
     def resolve_input(self, ctx) -> types.Property:
-        """Build the operator input form.
-
-        Each enabled mode shows a checkbox + a number input for
-        intensity (0.00–100.00 %).  Disabled modes show only the
-        checkbox.  No sliders — plain number fields are compact and
-        give exact precision control.
-        """
+        """Build the operator input form."""
         inputs = types.Object()
+        has_enabled = self._render_modes(inputs, ctx)
+        self._render_noise(inputs, ctx)
+        self._render_preview(inputs, ctx, has_enabled)
+        self._render_settings(inputs, ctx)
+        self._render_target(inputs, ctx)
+        self._render_delegation_notice(inputs, ctx)
+        if not has_enabled:
+            inputs.view(
+                "no_modes_warning",
+                types.Warning(
+                    label="No modes enabled",
+                    description="Enable at least one corruption mode above.",
+                ),
+            )
+        return types.Property(inputs)
 
-        # -- Corruption modes ----------------------------------------
+    def _render_modes(self, inputs, ctx) -> bool:
+        """Render the corruption-mode checkboxes and intensity fields.
+
+        Returns True if any mode is currently enabled.
+        """
         inputs.md("### Corruption Modes")
-
         for mode_name in GLITCH_MODES:
             enabled = bool(ctx.params.get(f"{mode_name}_enabled", False))
-
             inputs.bool(
                 f"{mode_name}_enabled",
                 label=MODE_LABELS[mode_name],
@@ -89,51 +105,50 @@ class ApplyGlitch(foo.Operator):
                 max=100.0,
                 view=types.FieldView(space=8, read_only=not enabled),
             )
-
-            # Extra tuning for block corruption — size / pattern / layers
             if mode_name == "block_corruption" and enabled:
-                inputs.float(
-                    "block_size_pct",
-                    label="Block size (% of image)",
-                    description=(
-                        "Block edge length as a percentage of the image's "
-                        "shorter side. 2% ~= 20 px on a 1024-wide image."
-                    ),
-                    default=_safe_float(ctx.params.get("block_size_pct"), default=2.0),
-                    min=0.5,
-                    max=10.0,
-                    view=types.FieldView(space=4, descriptionView="tooltip"),
-                )
+                self._render_block_tuning(inputs, ctx)
+        return any(ctx.params.get(f"{m}_enabled") for m in GLITCH_MODES)
 
-                pattern_choices = types.Dropdown()
-                for p in BLOCK_PATTERNS:
-                    pattern_choices.add_choice(p, label=p.capitalize())
-                inputs.enum(
-                    "block_pattern",
-                    pattern_choices.values(),
-                    default=ctx.params.get("block_pattern", "uniform"),
-                    label="Pattern",
-                    view=types.DropdownView(space=4),
-                )
+    def _render_block_tuning(self, inputs, ctx) -> None:
+        """Render block-corruption-specific tuning fields (size, pattern, layers)."""
+        inputs.float(
+            "block_size_pct",
+            label="Block size (% of image)",
+            description=(
+                "Block edge length as a percentage of the image's shorter "
+                "side. 2% ~= 20 px on a 1024-wide image."
+            ),
+            default=_safe_float(ctx.params.get("block_size_pct"), default=2.0),
+            min=0.5,
+            max=10.0,
+            view=types.FieldView(space=4, descriptionView="tooltip"),
+        )
+        pattern_choices = types.Dropdown()
+        for p in BLOCK_PATTERNS:
+            pattern_choices.add_choice(p, label=p.capitalize())
+        inputs.enum(
+            "block_pattern",
+            pattern_choices.values(),
+            default=ctx.params.get("block_pattern", "uniform"),
+            label="Pattern",
+            view=types.DropdownView(space=4),
+        )
+        inputs.int(
+            "block_layers",
+            label="Layers",
+            description=(
+                "Number of multi-pass corruption layers (1–4). Each layer "
+                "uses a different block size around the configured one; "
+                "intensity is split across layers to keep total density similar."
+            ),
+            default=_safe_int(ctx.params.get("block_layers"), default=1),
+            min=1,
+            max=4,
+            view=types.FieldView(space=4, descriptionView="tooltip"),
+        )
 
-                inputs.int(
-                    "block_layers",
-                    label="Layers",
-                    description=(
-                        "Number of multi-pass corruption layers (1–4). "
-                        "Each layer uses a different block size around "
-                        "the configured one; intensity is split across "
-                        "layers to keep total density similar."
-                    ),
-                    default=_safe_int(ctx.params.get("block_layers"), default=1),
-                    min=1,
-                    max=4,
-                    view=types.FieldView(space=4, descriptionView="tooltip"),
-                )
-
-        has_enabled = any(ctx.params.get(f"{m}_enabled") for m in GLITCH_MODES)
-
-        # -- Noise injection (always visible, mirrors mode layout) ---
+    def _render_noise(self, inputs, ctx) -> None:
+        """Render the noise-injection toggle and scale field."""
         inputs.md("### Noise Injection")
         noise_enabled = bool(ctx.params.get("noise_enabled", False))
         inputs.bool(
@@ -152,7 +167,8 @@ class ApplyGlitch(foo.Operator):
             view=types.FieldView(space=8, read_only=not noise_enabled),
         )
 
-        # -- Inline preview ------------------------------------------
+    def _render_preview(self, inputs, ctx, has_enabled: bool) -> None:
+        """Render the preview toggle and (if enabled) the preview image."""
         inputs.md("### Preview")
         inputs.bool(
             "show_preview",
@@ -161,43 +177,36 @@ class ApplyGlitch(foo.Operator):
             default=bool(ctx.params.get("show_preview", False)),
             view=types.SwitchView(descriptionView="tooltip"),
         )
+        if not (ctx.params.get("show_preview") and has_enabled):
+            return
+        preview_path = self._generate_preview_file(ctx)
+        if preview_path is None:
+            inputs.view(
+                "no_sample_warning",
+                types.Warning(
+                    label="No sample available",
+                    description="Select a sample in the grid to preview.",
+                ),
+            )
+            return
+        # Cache-bust via mtime so the browser picks up the new file.
+        mtime = int(os.path.getmtime(preview_path) * 1000)
+        media_url = f"/media?filepath={quote(preview_path)}&v={mtime}"
+        inputs.define_property(
+            "preview_image",
+            types.String(),
+            default=media_url,
+            view=types.ImageView(height=300),
+        )
 
-        if ctx.params.get("show_preview") and has_enabled:
-            preview_path = self._generate_preview_file(ctx)
-            if preview_path is not None:
-                # Serve through FiftyOne's /media endpoint with a
-                # cache-busting token based on the file's mtime, so
-                # updates bypass the browser image cache.
-                from urllib.parse import quote
-
-                mtime = int(os.path.getmtime(preview_path) * 1000)
-                media_url = (
-                    f"/media?filepath={quote(preview_path)}&v={mtime}"
-                )
-                inputs.define_property(
-                    "preview_image",
-                    types.String(),
-                    default=media_url,
-                    view=types.ImageView(height=300),
-                )
-            else:
-                inputs.view(
-                    "no_sample_warning",
-                    types.Warning(
-                        label="No sample available",
-                        description="Select a sample in the grid to preview.",
-                    ),
-                )
-
-        # -- Settings ------------------------------------------------
+    def _render_settings(self, inputs, ctx) -> None:
+        """Render seed and filename-suffix inputs plus suffix validation."""
         inputs.md("### Settings")
-
         inputs.str(
             "seed",
             label="Seed (blank = random)",
             default=str(ctx.params.get("seed", "") or ""),
         )
-
         suffix_value = str(
             ctx.params.get("filename_suffix", "_glitch_{TIMESTAMP}")
         )
@@ -211,15 +220,12 @@ class ApplyGlitch(foo.Operator):
             ),
             default=suffix_value,
         )
-
         unknown_tokens = find_unknown_placeholders(suffix_value)
         if unknown_tokens:
             inputs.view(
                 "filename_suffix_warning",
                 types.Warning(
-                    label=(
-                        f"Unknown placeholder(s): {', '.join(unknown_tokens)}"
-                    ),
+                    label=f"Unknown placeholder(s): {', '.join(unknown_tokens)}",
                     description=(
                         f"These tokens are not recognized and will be "
                         f"stripped from the output filename. Valid "
@@ -228,13 +234,12 @@ class ApplyGlitch(foo.Operator):
                 ),
             )
 
-        # -- Augment Samples ----------------------------------------
+    def _render_target(self, inputs, ctx) -> None:
+        """Render the target dropdown and any target-specific sub-fields."""
         inputs.md("### Augment Samples")
-
         target_choices = types.Dropdown()
         for key, (tlabel, tdesc) in TARGET_CHOICES.items():
             target_choices.add_choice(key, label=tlabel, description=tdesc)
-
         inputs.enum(
             "target",
             target_choices.values(),
@@ -242,9 +247,7 @@ class ApplyGlitch(foo.Operator):
             label="Augment Samples:",
             view=target_choices,
         )
-
         target = ctx.params.get("target", "current_view")
-
         if target == "random_fraction":
             inputs.float(
                 "fraction",
@@ -253,79 +256,75 @@ class ApplyGlitch(foo.Operator):
                 min=0.01,
                 max=1.0,
             )
+        elif target == "saved_view":
+            self._render_saved_view_picker(inputs, ctx)
+        elif target == "samples_with_tag":
+            self._render_tag_picker(inputs, ctx)
 
-        if target == "saved_view":
-            saved_views = ctx.dataset.list_saved_views() if ctx.dataset else []
-            if saved_views:
-                view_choices = types.Dropdown()
-                for sv in saved_views:
-                    view_choices.add_choice(sv, label=sv)
-                inputs.enum(
-                    "saved_view_name",
-                    view_choices.values(),
-                    label="Saved view",
-                    view=view_choices,
-                )
-            else:
-                inputs.view(
-                    "no_views_warning",
-                    types.Warning(
-                        label="No saved views",
-                        description="This dataset has no saved views.",
-                    ),
-                )
+    def _render_saved_view_picker(self, inputs, ctx) -> None:
+        """Render the saved-view dropdown, or a warning if none exist."""
+        saved_views = ctx.dataset.list_saved_views() if ctx.dataset else []
+        if not saved_views:
+            inputs.view(
+                "no_views_warning",
+                types.Warning(
+                    label="No saved views",
+                    description="This dataset has no saved views.",
+                ),
+            )
+            return
+        view_choices = types.Dropdown()
+        for sv in saved_views:
+            view_choices.add_choice(sv, label=sv)
+        inputs.enum(
+            "saved_view_name",
+            view_choices.values(),
+            label="Saved view",
+            view=view_choices,
+        )
 
-        if target == "samples_with_tag":
-            tags = ctx.dataset.distinct("tags") if ctx.dataset else []
-            if tags:
-                tag_view = types.Dropdown(multiple=True)
-                for t in tags:
-                    tag_view.add_choice(t, label=t)
-                inputs.list(
-                    "target_tags",
-                    types.String(),
-                    default=list(ctx.params.get("target_tags") or []),
-                    label="Tags",
-                    view=tag_view,
-                )
-            else:
-                inputs.view(
-                    "no_tags_warning",
-                    types.Warning(
-                        label="No sample tags",
-                        description="This dataset has no sample tags to match.",
-                    ),
-                )
+    def _render_tag_picker(self, inputs, ctx) -> None:
+        """Render the multi-select tag picker, or a warning if none exist."""
+        tags = ctx.dataset.distinct("tags") if ctx.dataset else []
+        if not tags:
+            inputs.view(
+                "no_tags_warning",
+                types.Warning(
+                    label="No sample tags",
+                    description="This dataset has no sample tags to match.",
+                ),
+            )
+            return
+        tag_view = types.Dropdown(multiple=True)
+        for t in tags:
+            tag_view.add_choice(t, label=t)
+        inputs.list(
+            "target_tags",
+            types.String(),
+            default=list(ctx.params.get("target_tags") or []),
+            label="Tags",
+            view=tag_view,
+        )
 
-        # -- Delegation recommendation -------------------------------
+    def _render_delegation_notice(self, inputs, ctx) -> None:
+        """Render a Notice suggesting Schedule for large targets."""
         try:
             target_view = self._resolve_target(ctx)
             count = len(target_view) if target_view is not None else 0
         except Exception:
             count = 0
-        if count > DELEGATE_THRESHOLD:
-            inputs.view(
-                "delegate_recommendation",
-                types.Notice(
-                    label=f"Large target ({count} samples)",
-                    description=(
-                        f"Consider **Schedule** rather than **Execute** "
-                        f"for targets larger than {DELEGATE_THRESHOLD} samples."
-                    ),
+        if count <= DELEGATE_THRESHOLD:
+            return
+        inputs.view(
+            "delegate_recommendation",
+            types.Notice(
+                label=f"Large target ({count} samples)",
+                description=(
+                    f"Consider **Schedule** rather than **Execute** "
+                    f"for targets larger than {DELEGATE_THRESHOLD} samples."
                 ),
-            )
-
-        # -- Validation ----------------------------------------------
-        if not has_enabled:
-            inputs.view(
-                "no_modes_warning",
-                types.Warning(
-                    label="No modes enabled",
-                    description=("Enable at least one corruption mode above."),
-                ),
-            )
-
-        return types.Property(inputs)
+            ),
+        )
 
     # ---------------------------------------------------------------
     # Execute
@@ -334,8 +333,9 @@ class ApplyGlitch(foo.Operator):
     def execute(self, ctx):
         """Apply glitch augmentation to every sample in the target.
 
-        Yields progress updates and creates new samples with corrupted
-        images saved alongside the originals.
+        Yields progress updates, creates new samples with corrupted images
+        saved alongside the originals, and removes the on-disk preview
+        file when finished.
         """
         profile = profile_from_params(ctx.params)
         suffix_template = ctx.params.get(
@@ -350,6 +350,7 @@ class ApplyGlitch(foo.Operator):
                 "No samples in target — nothing to do.",
                 type="warning",
             )
+            self._cleanup_preview_file(ctx)
             yield {"status": "empty_target", "count": 0}
             return
 
@@ -388,6 +389,7 @@ class ApplyGlitch(foo.Operator):
             )
 
         dataset.add_samples(new_samples)
+        self._cleanup_preview_file(ctx)
         ctx.ops.notify(f"Created {len(new_samples)} glitched samples")
         ctx.ops.reload_dataset()
 
@@ -418,9 +420,9 @@ class ApplyGlitch(foo.Operator):
     def _generate_preview_file(self, ctx) -> str | None:
         """Generate a glitched preview image and write it next to the source.
 
-        Uses a fixed filename that is overwritten on each call.  Never
-        added to the dataset.  Returns the file path, or ``None`` if no
-        sample is available.
+        Uses :data:`_PREVIEW_FILENAME` as a fixed name that is overwritten
+        on each call.  Never added to the dataset.  Returns the file path,
+        or ``None`` if no sample is available.
         """
         sample_id = _resolve_sample_id(ctx)
         if sample_id is None:
@@ -430,17 +432,31 @@ class ApplyGlitch(foo.Operator):
         profile = profile_from_params(ctx.params)
         corrupted = generate_preview_image(sample.filepath, profile, profile.seed)
 
-        preview_path = str(
-            Path(sample.filepath).parent / ".fo_glitch_preview.jpg"
-        )
+        preview_path = str(Path(sample.filepath).parent / _PREVIEW_FILENAME)
         save_image(corrupted, preview_path)
         return preview_path
+
+    def _cleanup_preview_file(self, ctx) -> None:
+        """Remove the on-disk preview file for the current preview sample.
+
+        Safe to call when no preview exists; all errors are swallowed so
+        cleanup never blocks the operator's successful completion.
+        """
+        sample_id = _resolve_sample_id(ctx)
+        if sample_id is None or ctx.dataset is None:
+            return
+        try:
+            sample = ctx.dataset[sample_id]
+            preview_path = Path(sample.filepath).parent / _PREVIEW_FILENAME
+            preview_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     def _resolve_target(self, ctx) -> fo.DatasetView | None:
         """Map the user's target selection to a FiftyOne view.
 
-        Returns ``None`` if the target cannot be resolved (e.g. no
-        samples selected, no tags chosen, etc.).
+        Returns ``None`` if the target cannot be resolved (e.g. no samples
+        selected, no tags chosen, etc.).
         """
         target = ctx.params.get("target", "current_view")
         dataset: fo.Dataset = ctx.dataset
@@ -490,8 +506,8 @@ class ApplyGlitch(foo.Operator):
 def _resolve_sample_id(ctx) -> str | None:
     """Return the ID of a sample for preview.
 
-    Prefers the first selected sample, then falls back to the first
-    sample in the current view.
+    Prefers the first selected sample, then falls back to the first sample
+    in the current view.
     """
     if ctx.selected:
         return ctx.selected[0]
