@@ -370,9 +370,7 @@ class ApplyGlitch(foo.Operator):
             save_image(corrupted, out_path)
 
             new_sample = fo.Sample(filepath=out_path)
-            for tag in sample.tags:
-                if tag != "_glitch_preview":
-                    new_sample.tags.append(tag)
+            new_sample.tags.extend(sample.tags)
             new_sample.tags.append("glitched")
             new_sample["glitch_source_id"] = sample.id
             new_sample["glitch_profile"] = profile.to_dict()
@@ -482,48 +480,6 @@ class ApplyGlitch(foo.Operator):
             return dataset.view()
 
         return None
-
-
-# ---------------------------------------------------------------------------
-# Cleanup operator
-# ---------------------------------------------------------------------------
-
-
-class CleanPreviews(foo.Operator):
-    """Delete all preview samples and their files from disk.
-
-    Utility operator for cleaning up ``_glitch_preview`` samples that
-    may remain from earlier versions of the plugin.
-    """
-
-    @property
-    def config(self) -> foo.OperatorConfig:
-        """Operator metadata — unlisted utility operator."""
-        return foo.OperatorConfig(
-            name="clean_previews",
-            label="Clean Glitch Previews",
-            description=("Remove all temporary glitch preview samples and files"),
-            unlisted=True,
-        )
-
-    def execute(self, ctx) -> dict[str, int]:
-        """Delete preview samples and their image files."""
-        dataset: fo.Dataset = ctx.dataset
-        preview_view = dataset.match_tags("_glitch_preview")
-        count = len(preview_view)
-        if count == 0:
-            return {"deleted": 0}
-
-        filepaths: list[str] = preview_view.values("filepath")
-        dataset.delete_samples(preview_view)
-        for fp in filepaths:
-            try:
-                os.remove(fp)
-            except OSError:
-                pass
-
-        ctx.ops.reload_dataset()
-        return {"deleted": count}
 
 
 # ---------------------------------------------------------------------------
