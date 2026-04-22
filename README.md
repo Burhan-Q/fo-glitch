@@ -1,6 +1,6 @@
 # fo-glitch
 
-A [FiftyOne](https://docs.voxel51.com) plugin that generates realistic camera corruption artifacts for training data augmentation. Apply glitch effects — pixel sorting, macro-block corruption, channel shifting, and more — to dataset samples directly from the FiftyOne App.
+A [FiftyOne](https://docs.voxel51.com) plugin that generates realistic camera-corruption artifacts for training-data augmentation. Apply glitch effects — pixel sorting, macro-block corruption, channel shifting, and more — to dataset samples directly from the FiftyOne App.
 
 ## Why
 
@@ -8,21 +8,33 @@ Real-world cameras (CCTV, industrial inspection, drones) produce transient image
 
 ## Corruption Modes
 
-| Mode | Effect | Real-World Artifact |
+| Mode | Effect | Real-world analogue |
 |------|--------|---------------------|
-| **Pixel Sort** | Sort pixels within rows by luminance | Artistic baseline / glitch-art hook |
+| **Pixel Sort** | Sort contiguous pixel runs within each row by brightness | Artistic baseline / glitch-art hook |
 | **Row Displacement** | Shift rows horizontally by random offsets | Scan-line displacement, signal timing errors |
-| **Block Corruption** | Scramble/freeze/zero 16x16 pixel blocks | H.264/H.265 macro-block corruption |
+| **Block Corruption** | Scramble / freeze / zero blocks at one or more sizes | H.264 / H.265 macro-block corruption |
 | **Channel Shift** | Offset R/G/B planes by different amounts | Chroma sub-sampling errors |
-| **Frame Tear** | Composite halves at different horizontal offsets | Torn frames from missing vsync |
-| **Scan Line Noise** | Periodic horizontal intensity bands | EMI interference patterns |
-| **Interlacing** | Drop alternating rows and interpolate | Field-based capture artifacts |
+| **Frame Tear** | Split the image at random y-coordinates and offset the halves | Torn frames from missing vsync |
+| **Scan Line Noise** | Periodic horizontal intensity bands | EMI interference |
+| **Interlacing** | Darken alternating rows | Field-based capture artifacts |
 
-Each mode has an independent **enable toggle** and **intensity slider** (0–100%).
+Each mode has an independent enable checkbox and a 0–100 % intensity number field. Block Corruption exposes three additional tuning fields when enabled: block size (% of the image's shorter edge), pattern (`uniform`, `localized`, `streak`), and layers (1–4 multi-pass count).
+
+## Architecture
+
+Single operator, no panel. The entire workflow — configure, preview, target, execute — lives in one dynamic operator form. A separate panel was prototyped but deliberately removed to avoid having two interfaces for the same functionality.
+
+```
+fiftyone.yml           plugin manifest
+__init__.py            registers the ApplyGlitch operator
+config.py              dataclasses, constants, env-var resolution, suffix helpers
+glitch.py              numpy-only corruption engine (7 mode fns + apply_profile)
+operators.py           ApplyGlitch (resolve_input split into per-section _render_* helpers)
+```
 
 ## Installation
 
-The plugin lives inside your FiftyOne plugins directory. If it isn't there already, copy or symlink it:
+The plugin lives inside your FiftyOne plugins directory. Copy or symlink it there if it isn't already:
 
 ```bash
 # Find your plugins directory
@@ -32,96 +44,114 @@ python -c "import fiftyone as fo; print(fo.config.plugins_dir)"
 ln -s /path/to/fo-glitch "$PLUGINS_DIR/@Burhan-Q/fo-glitch"
 ```
 
-No additional Python dependencies beyond FiftyOne itself are required — the corruption engine uses only NumPy and Pillow, both of which ship with FiftyOne.
+No additional Python dependencies beyond FiftyOne itself — the engine uses only NumPy and Pillow, both of which ship with FiftyOne.
 
-## Quick Start
+## Quick start
 
 ### 1. Open the operator
 
-Launch the FiftyOne App with any image dataset loaded. Open the **operator browser** (press `` ` `` or click the search icon) and search for **Apply Glitch**.
+Launch the FiftyOne App with any image dataset loaded. Open the operator browser (press `` ` `` or click the search icon) and run **Apply Glitch Augmentations**.
 
-The operator uses three tabs: **Corruption Modes**, **Settings**, and **Target**.
+The form is flat (not tabbed). Sections, top to bottom:
 
-### 2. Enable corruption modes (Corruption Modes tab)
+| Section | What it controls |
+|---------|------------------|
+| Corruption Modes | The 7 per-mode toggles + intensities (and Block Corruption sub-fields) |
+| Noise Injection | Per-sample intensity jitter toggle + scale % |
+| Preview | Inline preview of the configured effect on the first selected / in-view sample |
+| Settings | Seed, filename-suffix template |
+| Augment Samples | Target-selection dropdown + target-specific sub-fields (fraction, saved view, tags) |
 
-Toggle on one or more corruption modes. An intensity slider (0–100%) appears for each enabled mode. For example:
+### 2. Enable modes and set intensities
 
-- Enable **Block Corruption (Macro-block)** at 60%
-- Enable **Channel Shift (RGB Offset)** at 40%
-- Enable **Scan Line Noise** at 30%
+Toggle on one or more modes. Each mode's intensity field becomes editable; a value of `0` or an empty field causes that mode to be skipped at execute time (same effect as leaving it disabled). Example:
 
-### 3. Configure settings (Settings tab)
+- **Block Corruption (Macro-block)** at 60 %, with size 2 % and 3 layers
+- **Channel Shift (RGB Offset)** at 40 %
+- **Scan Line Noise** at 30 %
 
-- **Enable noise injection** — jitters each mode's intensity per sample so artifacts vary across the batch. A scale of 15% means each intensity varies by up to &plusmn;15% of its configured value.
-- **Seed** — set an integer for reproducible results, or leave blank for random.
-- **Filename suffix** — template appended to source filenames. Default: `_glitch_{TIMESTAMP}`.
+### 3. (Optional) enable noise injection
 
-Available placeholders:
+Flip **Enable noise injection** to jitter each mode's intensity independently per sample. The scale is a percentage of each intensity — a scale of 15 % means each sample's effective intensity is perturbed by up to ±15 % of its configured value. This produces visibly distinct glitches across a batch.
 
-| Placeholder | Expands To | Example |
-|-------------|-----------|---------|
-| `{TIMESTAMP}` | Unix epoch | `1713045600` |
-| `{DATETIME}` | ISO datetime (file-safe) | `2026-04-13T18-00-00` |
-| `{DATE}` | ISO date | `2026-04-13` |
-| `{INDEX}` | Zero-padded batch index | `007` |
-| `{PROFILE}` | Profile name (sanitized) | `cctv_corruption` |
-| `{MODE}` | Enabled mode names | `pixel_sort,block_corruption` |
+### 4. (Optional) preview
 
-Output files are saved **alongside the source image** using the pattern `{original_stem}{suffix}{ext}`.
+Flip **Show preview** to render a glitched version of the first selected sample (or first sample in view if nothing is selected). The preview is written to a hidden file next to the source sample and served through FiftyOne's `/media` endpoint. The file is removed at the end of execute; dismissing the dialog without running may leave at most one orphan file per source directory, which is overwritten on the next preview.
 
-### 4. Preview before applying (Target tab)
+### 5. Settings
 
-Select **Preview selected sample** as the target and click **Execute**. This generates a temporary glitched copy of the currently selected sample so you can inspect the effect. Previous previews are cleaned up automatically.
+- **Seed** — integer for reproducible output, blank for non-deterministic. With a seed set, sample *i* of the batch receives a deterministic sub-seed `base_seed + i`, so results are reproducible even when noise injection is enabled.
+- **Filename suffix** — template appended to source filenames. Default: `_glitch_{TIMESTAMP}`. Supported placeholders:
 
-Adjust modes and preview again until the result looks right.
+  | Placeholder | Expands to | Example |
+  |-------------|-----------|---------|
+  | `{TIMESTAMP}` | Unix epoch (int) | `1776891021` |
+  | `{DATETIME}` | ISO datetime (file-safe, UTC) | `2026-04-22T18-00-00` |
+  | `{DATE}` | ISO date (UTC) | `2026-04-22` |
+  | `{INDEX}` | Zero-padded batch index | `007` |
+  | `{MODE}` | Comma-joined enabled mode names | `pixel_sort,block_corruption` |
 
-### 5. Apply to a batch (Target tab)
+  Any other `{...}` token (`{FOO}`, `{1234}`, `{AB !@}`, etc.) is flagged with an inline warning and **stripped** from the output filename at execute time. Output files are saved **alongside the source image**, using the pattern `{original_stem}{expanded_suffix}{ext}`.
 
-Once satisfied with the preview, change the target to one of:
+### 6. Pick a target and execute
 
-- **Current sample** — the single selected sample
-- **Current view** — all samples in the active view/filter
-- **Random fraction** — a random subset of the full dataset (a fraction slider appears)
-- **Saved view** — a previously saved view by name
-- **Entire dataset** — every sample
+Choose **Augment Samples** from:
 
-Click **Execute**. New samples are added to the dataset with:
+| Choice | What it means |
+|--------|---------------|
+| Selected sample(s) | Samples highlighted in the grid, or the current modal sample if none are highlighted |
+| Samples with tag(s) | Multi-select a set of sample tags; matches `match_tags` |
+| Current view | The active view / filter (default) |
+| Saved view | A dataset-saved view selected by name |
+| Random fraction of dataset | Random subset sized by the fraction slider (0.01–1.00) |
+| Entire dataset | All samples |
 
-- A `glitched` tag for easy filtering
-- `glitch_source_id` linking back to the original sample
-- `glitch_applied_params` recording the exact intensities used (after noise)
-- `glitch_seed` for reproducibility (when a seed is set)
+When the resolved target exceeds the delegation threshold (default 100 samples; see below), a notice appears recommending **Schedule** instead of **Execute**. Use the button's ▾ menu to choose.
 
-### 6. Filter and review
+On execute, new samples are added to the dataset with:
 
-After applying, filter the dataset by the `glitched` tag to review all generated samples:
+- A `glitched` tag (plus all tags inherited from the source)
+- `glitch_source_id` — the source sample's ID
+- `glitch_profile` — a dict of the applied configuration
+- `glitch_applied_params` — the actual intensities used after any noise jitter
+- `glitch_seed` — the per-sample sub-seed, when a base seed was set
+
+### 7. Filter and review
 
 ```python
 view = dataset.match_tags("glitched")
 session.view = view
 ```
 
+## Configuration
+
+| Environment variable | Default | Effect |
+|----------------------|---------|--------|
+| `FO_GLITCH_DELEGATE_THRESHOLD` | `100` | Sample-count threshold above which the form recommends Schedule rather than Execute. Resolved once at plugin-module load; set before launching FiftyOne to change it. |
+
+Declared in `fiftyone.yml` under `secrets:`.
+
 ## Reproducibility
 
-Set the **Seed** field to an integer value. With a seed set, the same profile applied to the same images will produce byte-identical output. Each sample in a batch receives a deterministic sub-seed (`base_seed + sample_index`), so results are reproducible even when noise injection is enabled.
+Given:
+- identical inputs (same images),
+- identical profile (same modes, intensities, noise settings),
+- identical seed,
+
+the plugin produces byte-identical output. Each sample's per-sample RNG is `numpy.random.default_rng(seed + index)` where `index` is its position in the target view iteration.
 
 ## Operators
 
 | Operator | Description | Listed |
 |----------|-------------|--------|
 | `apply_glitch` | Configure, preview, and apply glitch augmentation | Yes |
-| `clean_previews` | Remove temporary preview samples and files | No |
-
-## Configuration Persistence
-
-The **Glitch Configurator** panel (available from the `+` panel browser) saves settings per-dataset using FiftyOne's ExecutionStore. Close the panel and reopen it later — mode toggles, intensity values, noise settings, and the suffix template are all restored. The panel can also trigger the Apply Glitch operator with its current settings pre-filled.
 
 ## Roadmap
 
 - **Save / export profiles** — persist named glitch configurations globally and share them across datasets or with teammates
-- **Real-time canvas preview** — hybrid JS panel with live pixel manipulation instead of the current operator-based preview
-- **Per-mode advanced parameters** — expose block size, sort direction, frequency, and other mode-specific knobs
+- **Real-time canvas preview** — hybrid JS panel with live pixel manipulation instead of the current operator-form preview
 - **Video support** — apply frame-level corruption patterns to video datasets
+- **Cursor-aware suffix insertion** — small buttons next to the suffix field that insert `{TIMESTAMP}` etc. at the cursor position rather than the end
 
 ## License
 
