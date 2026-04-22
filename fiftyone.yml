@@ -11,3 +11,5 @@ operators:
   - clean_previews
 panels:
   - glitch_panel
+secrets:
+  - FO_GLITCH_DELEGATE_THRESHOLD  # optional; default 100 — sample count above which the operator form suggests using Schedule
