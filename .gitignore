@@ -1,4 +1,8 @@
 __pycache__/
 .ref/
 .env
+.playwright-mcp/
+
+*.png
+
 
