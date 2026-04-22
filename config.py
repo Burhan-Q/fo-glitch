@@ -1,4 +1,4 @@
-"""Glitch profile dataclasses, constants, and storage helpers."""
+"""Glitch profile dataclasses, constants, and suffix expansion."""
 
 from __future__ import annotations
 
@@ -15,38 +15,34 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------------------
 
 
-def _safe_float(value: object, default: float = 0.0) -> float:
-    """Coerce arbitrary user input to a finite, non-negative float.
+def _coerce_number(
+    value: object, default: float, *, as_int: bool = False
+) -> float | int:
+    """Coerce arbitrary user input to a finite, non-negative number.
 
     ``None``, NaN, infinity, and unparseable values all map to *default*.
-    Negative numbers are made positive.
+    Negative numbers are made positive.  Returns an ``int`` when
+    *as_int* is True, otherwise a ``float``.
     """
     if value is None:
-        return default
+        return int(default) if as_int else default
     try:
         f = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        return default
+        return int(default) if as_int else default
     if math.isnan(f) or math.isinf(f):
-        return default
-    return abs(f)
+        return int(default) if as_int else default
+    return abs(int(f)) if as_int else abs(f)
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    """Coerce arbitrary user input to a finite, non-negative float."""
+    return _coerce_number(value, default)  # type: ignore[return-value]
 
 
 def _safe_int(value: object, default: int = 0) -> int:
-    """Coerce arbitrary user input to a non-negative int.
-
-    ``None``, NaN, infinity, and unparseable values all map to *default*.
-    Negative numbers are made positive.
-    """
-    if value is None:
-        return default
-    try:
-        f = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
-    if math.isnan(f) or math.isinf(f):
-        return default
-    return abs(int(f))
+    """Coerce arbitrary user input to a non-negative int."""
+    return _coerce_number(value, default, as_int=True)  # type: ignore[return-value]
 
 
 def _parse_seed(value: object) -> int | None:
@@ -126,7 +122,7 @@ class NoiseConfig:
 
 @dataclass
 class GlitchProfile:
-    """Complete glitch configuration — all modes, noise, seed, and naming.
+    """Complete glitch configuration — modes, noise, seed, and suffix template.
 
     Attributes:
         pixel_sort: Brightness-based row pixel sorting.
@@ -162,7 +158,11 @@ class GlitchProfile:
     # -- serialization -------------------------------------------------------
 
     def to_dict(self) -> dict[str, object]:
-        """Serialize to a JSON-compatible dict for ExecutionStore persistence."""
+        """Serialize to a JSON-compatible dict.
+
+        Used to populate the ``glitch_profile`` field on each generated
+        sample so the exact configuration that produced it is recorded.
+        """
         return asdict(self)
 
     @classmethod
@@ -302,8 +302,6 @@ BLOCK_PATTERNS: tuple[str, ...] = ("uniform", "localized", "streak")
 # Filename suffix expansion
 # ---------------------------------------------------------------------------
 
-_UNSAFE_FILENAME_RE = re.compile(r"[^\w\-.,]")
-
 VALID_PLACEHOLDERS: tuple[str, ...] = (
     "TIMESTAMP", "DATETIME", "DATE", "INDEX", "MODE",
 )
@@ -318,11 +316,6 @@ VALID_PLACEHOLDERS_HINT: str = ", ".join(
     "{" + p + "}" for p in VALID_PLACEHOLDERS
 )
 """Pre-formatted comma-separated list of valid placeholders for UI strings."""
-
-
-def _sanitize_for_filename(value: str) -> str:
-    """Replace characters that are unsafe in filenames with underscores."""
-    return _UNSAFE_FILENAME_RE.sub("_", value)
 
 
 def find_unknown_placeholders(template: str) -> list[str]:
@@ -353,7 +346,7 @@ def expand_suffix(template: str, profile: GlitchProfile, index: int) -> str:
 
     Args:
         template: Suffix string with ``{PLACEHOLDER}`` tokens.
-        profile: The glitch profile being applied (for name / mode info).
+        profile: The glitch profile being applied (for enabled-mode info).
         index: Zero-based index of this sample within the current batch.
 
     Returns:
@@ -368,7 +361,10 @@ def expand_suffix(template: str, profile: GlitchProfile, index: int) -> str:
         "DATETIME": now.strftime("%Y-%m-%dT%H-%M-%S"),
         "DATE": now.strftime("%Y-%m-%d"),
         "INDEX": f"{index:03d}",
-        "MODE": _sanitize_for_filename(",".join(enabled)) if enabled else "none",
+        # Mode names are snake_case identifiers from GLITCH_MODES; no
+        # filename-sanitization needed.  Commas are filename-safe on
+        # all supported OSes.
+        "MODE": ",".join(enabled) if enabled else "none",
     }
 
     result = template
