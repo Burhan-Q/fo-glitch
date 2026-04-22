@@ -32,6 +32,13 @@ from .glitch import apply_profile, generate_preview_image, load_image, save_imag
 # next to the source sample and overwritten on each preview generation.
 _PREVIEW_FILENAME = ".fo_glitch_preview.jpg"
 
+# Threshold for the {MODE}-in-suffix filename-length warning.  When this
+# many (or more) modes are enabled and the suffix template contains
+# ``{MODE}``, the joined mode list starts approaching filesystem name
+# limits (255 bytes on most filesystems) once combined with the source
+# stem and extension.
+_MODE_SUFFIX_WARN_THRESHOLD = 3
+
 
 class ApplyGlitch(foo.Operator):
     """Configure and apply glitch augmentation to dataset samples.
@@ -233,6 +240,27 @@ class ApplyGlitch(foo.Operator):
                     ),
                 ),
             )
+        # Warn when {MODE} expansion could produce filenames that approach
+        # filesystem name limits.  Triggered when the suffix contains
+        # ``{MODE}`` and several corruption modes are enabled at once.
+        enabled_count = sum(
+            1 for m in GLITCH_MODES if ctx.params.get(f"{m}_enabled")
+        )
+        if "{MODE}" in suffix_value and enabled_count >= _MODE_SUFFIX_WARN_THRESHOLD:
+            inputs.view(
+                "mode_suffix_length_warning",
+                types.Warning(
+                    label=(
+                        f"{{MODE}} will expand to {enabled_count} mode names"
+                    ),
+                    description=(
+                        "The expanded filename may approach filesystem name "
+                        "limits (255 bytes on most filesystems).  Consider "
+                        "dropping {MODE} from the suffix, or enabling fewer "
+                        "modes per run."
+                    ),
+                ),
+            )
 
     def _render_target(self, inputs, ctx) -> None:
         """Render the target dropdown and any target-specific sub-fields."""
@@ -255,6 +283,7 @@ class ApplyGlitch(foo.Operator):
                 default=_safe_float(ctx.params.get("fraction"), default=0.1),
                 min=0.01,
                 max=1.0,
+                view=types.FieldView(),
             )
         elif target == "saved_view":
             self._render_saved_view_picker(inputs, ctx)
