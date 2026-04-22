@@ -12,9 +12,11 @@ import numpy as np
 
 from .config import (
     BLOCK_PATTERNS,
+    DELEGATE_THRESHOLD,
     GLITCH_MODES,
     MODE_DESCRIPTIONS,
     MODE_LABELS,
+    TARGET_CHOICES,
     _safe_float,
     _safe_int,
     expand_suffix,
@@ -41,7 +43,7 @@ class ApplyGlitch(foo.Operator):
         """Operator metadata."""
         return foo.OperatorConfig(
             name="apply_glitch",
-            label="Apply Glitch",
+            label="Apply Glitch Augmentations",
             description=("Configure and apply glitch augmentation to dataset samples"),
             icon="auto_fix_high",
             dynamic=True,
@@ -127,9 +129,28 @@ class ApplyGlitch(foo.Operator):
                     view=types.FieldView(space=4, descriptionView="tooltip"),
                 )
 
-        # -- Inline preview ------------------------------------------
         has_enabled = any(ctx.params.get(f"{m}_enabled") for m in GLITCH_MODES)
 
+        # -- Noise injection (always visible, mirrors mode layout) ---
+        inputs.md("### Noise Injection")
+        noise_enabled = bool(ctx.params.get("noise_enabled", False))
+        inputs.bool(
+            "noise_enabled",
+            label="Enable noise injection",
+            description="Jitter each mode's intensity per sample so results vary",
+            default=noise_enabled,
+            view=types.CheckboxView(space=4, descriptionView="tooltip"),
+        )
+        inputs.float(
+            "noise_scale",
+            label="Noise scale (%)",
+            default=_safe_float(ctx.params.get("noise_scale"), default=10.0),
+            min=0.0,
+            max=50.0,
+            view=types.FieldView(space=8, read_only=not noise_enabled),
+        )
+
+        # -- Inline preview ------------------------------------------
         inputs.md("### Preview")
         inputs.bool(
             "show_preview",
@@ -169,22 +190,6 @@ class ApplyGlitch(foo.Operator):
         # -- Settings ------------------------------------------------
         inputs.md("### Settings")
 
-        inputs.bool(
-            "noise_enabled",
-            label="Enable noise injection",
-            description="Jitter each mode's intensity per sample so results vary",
-            default=bool(ctx.params.get("noise_enabled", False)),
-            view=types.CheckboxView(descriptionView="tooltip"),
-        )
-        if ctx.params.get("noise_enabled"):
-            inputs.float(
-                "noise_scale",
-                label="Noise scale (%)",
-                default=_safe_float(ctx.params.get("noise_scale"), default=10.0),
-                min=0.0,
-                max=50.0,
-            )
-
         inputs.str(
             "seed",
             label="Seed (blank = random)",
@@ -201,24 +206,18 @@ class ApplyGlitch(foo.Operator):
             default=str(ctx.params.get("filename_suffix", "_glitch_{TIMESTAMP}")),
         )
 
-        # -- Target --------------------------------------------------
-        inputs.md("### Target")
+        # -- Augment Samples ----------------------------------------
+        inputs.md("### Augment Samples")
 
         target_choices = types.Dropdown()
-        target_choices.add_choice("current_sample", label="Current sample")
-        target_choices.add_choice("current_view", label="Current view")
-        target_choices.add_choice(
-            "random_fraction",
-            label="Random fraction of dataset",
-        )
-        target_choices.add_choice("saved_view", label="Saved view")
-        target_choices.add_choice("entire_dataset", label="Entire dataset")
+        for key, (tlabel, tdesc) in TARGET_CHOICES.items():
+            target_choices.add_choice(key, label=tlabel, description=tdesc)
 
         inputs.enum(
             "target",
             target_choices.values(),
             default=ctx.params.get("target", "current_view"),
-            label="Target",
+            label="Augment Samples:",
             view=target_choices,
         )
 
@@ -254,7 +253,47 @@ class ApplyGlitch(foo.Operator):
                     ),
                 )
 
-        # -- Validation / delegation ---------------------------------
+        if target == "samples_with_tag":
+            tags = ctx.dataset.distinct("tags") if ctx.dataset else []
+            if tags:
+                tag_view = types.Dropdown(multiple=True)
+                for t in tags:
+                    tag_view.add_choice(t, label=t)
+                inputs.list(
+                    "target_tags",
+                    types.String(),
+                    default=list(ctx.params.get("target_tags") or []),
+                    label="Tags",
+                    view=tag_view,
+                )
+            else:
+                inputs.view(
+                    "no_tags_warning",
+                    types.Warning(
+                        label="No sample tags",
+                        description="This dataset has no sample tags to match.",
+                    ),
+                )
+
+        # -- Delegation recommendation -------------------------------
+        try:
+            target_view = self._resolve_target(ctx)
+            count = len(target_view) if target_view is not None else 0
+        except Exception:
+            count = 0
+        if count > DELEGATE_THRESHOLD:
+            inputs.view(
+                "delegate_recommendation",
+                types.Notice(
+                    label=f"Large target ({count} samples)",
+                    description=(
+                        f"Consider **Schedule** rather than **Execute** "
+                        f"for targets larger than {DELEGATE_THRESHOLD} samples."
+                    ),
+                ),
+            )
+
+        # -- Validation ----------------------------------------------
         if not has_enabled:
             inputs.view(
                 "no_modes_warning",
@@ -264,28 +303,7 @@ class ApplyGlitch(foo.Operator):
                 ),
             )
 
-        inputs.bool(
-            "delegate",
-            default=False,
-            label="Delegate execution?",
-            description="Run in the background (recommended for large targets)",
-            view=types.CheckboxView(descriptionView="tooltip"),
-        )
-
         return types.Property(inputs)
-
-    # ---------------------------------------------------------------
-    # Delegation
-    # ---------------------------------------------------------------
-
-    def resolve_delegation(self, ctx) -> bool:
-        """Auto-delegate when the target is large."""
-        if ctx.params.get("delegate"):
-            return True
-        target_view = self._resolve_target(ctx)
-        if target_view is not None and len(target_view) > 100:
-            return True
-        return False
 
     # ---------------------------------------------------------------
     # Execute
@@ -401,16 +419,27 @@ class ApplyGlitch(foo.Operator):
     def _resolve_target(self, ctx) -> fo.DatasetView | None:
         """Map the user's target selection to a FiftyOne view.
 
-        Returns ``None`` if the target cannot be resolved.
+        Returns ``None`` if the target cannot be resolved (e.g. no
+        samples selected, no tags chosen, etc.).
         """
         target = ctx.params.get("target", "current_view")
         dataset: fo.Dataset = ctx.dataset
+        if dataset is None:
+            return None
 
-        if target == "current_sample":
-            selected = ctx.selected
-            if not selected:
+        if target == "selected_samples":
+            ids = list(ctx.selected) if ctx.selected else []
+            # Fall back to the modal's current sample if nothing is
+            # highlighted in the grid.
+            if not ids and getattr(ctx, "current_sample", None):
+                ids = [ctx.current_sample]
+            return dataset.select(ids) if ids else None
+
+        if target == "samples_with_tag":
+            tags = list(ctx.params.get("target_tags") or [])
+            if not tags:
                 return None
-            return dataset.select(selected[:1])
+            return dataset.match_tags(tags)
 
         if target == "current_view":
             return ctx.target_view()

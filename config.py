@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
@@ -248,6 +249,53 @@ MODE_DESCRIPTIONS: dict[str, str] = {
     "interlace": "Darkens alternating rows to produce scan-line / comb artefacts (field-based capture)",
 }
 """Concise tooltip descriptions shown beneath each mode's checkbox."""
+
+
+# ---------------------------------------------------------------------------
+# Target-selection choices
+# ---------------------------------------------------------------------------
+
+TARGET_CHOICES: dict[str, tuple[str, str]] = {
+    "selected_samples": (
+        "Selected sample(s)",
+        "The sample(s) highlighted in the grid or shown in the viewer",
+    ),
+    "samples_with_tag": (
+        "Samples with tag(s)",
+        "Every sample carrying one or more of the tags you pick below",
+    ),
+    "current_view": (
+        "Current view",
+        "Every sample in the active view / filter",
+    ),
+    "saved_view": (
+        "Saved view",
+        "A previously saved view loaded by name",
+    ),
+    "random_fraction": (
+        "Random fraction of dataset",
+        "A random subset of the full dataset at the fraction you pick",
+    ),
+    "entire_dataset": (
+        "Entire dataset",
+        "Every sample in the dataset, unfiltered",
+    ),
+}
+"""Ordered ``{key: (label, description)}`` for the Augment Samples dropdown."""
+
+
+# ---------------------------------------------------------------------------
+# Runtime tunables (env vars)
+# ---------------------------------------------------------------------------
+
+DELEGATE_THRESHOLD: int = _safe_int(
+    os.environ.get("FO_GLITCH_DELEGATE_THRESHOLD"), default=100
+)
+"""Sample-count threshold above which the operator form recommends Schedule.
+
+Configured via the ``FO_GLITCH_DELEGATE_THRESHOLD`` environment variable;
+resolved once at module load.  Defaults to 100 when unset or invalid.
+"""
 
 BLOCK_PATTERNS: tuple[str, ...] = ("uniform", "localized", "streak")
 """Valid values for :attr:`GlitchProfile.block_pattern`."""
