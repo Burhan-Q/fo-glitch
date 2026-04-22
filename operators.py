@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from urllib.parse import quote
@@ -27,6 +28,8 @@ from .config import (
 )
 from .glitch import apply_profile, generate_preview_image, load_image, save_image
 
+
+logger = logging.getLogger(__name__)
 
 # On-disk name for the transient operator-form preview image.  Written
 # next to the source sample and overwritten on each preview generation.
@@ -385,19 +388,41 @@ class ApplyGlitch(foo.Operator):
 
         total = len(target_view)
         new_samples: list[fo.Sample] = []
+        skipped: list[tuple[str, str]] = []  # (filepath, reason)
 
         for i, sample in enumerate(target_view.iter_samples()):
             rng = _make_rng(profile.seed, index=i)
-
-            img = load_image(sample.filepath)
-            corrupted, applied_params = apply_profile(img, profile, rng)
 
             src_path = Path(sample.filepath)
             expanded_suffix = expand_suffix(suffix_template, profile, i)
             out_path = str(
                 src_path.parent / f"{src_path.stem}{expanded_suffix}{src_path.suffix}"
             )
-            save_image(corrupted, out_path)
+
+            try:
+                img = load_image(sample.filepath)
+                corrupted, applied_params = apply_profile(img, profile, rng)
+                save_image(corrupted, out_path)
+            except OSError as exc:
+                # Typical causes: unreadable source, unwritable parent
+                # directory, disk full.  Log with context and skip this
+                # sample; continue the batch so one bad sample doesn't
+                # kill an N-sample run.
+                logger.error(
+                    "fo-glitch: failed to process %s -> %s: %s",
+                    sample.filepath,
+                    out_path,
+                    exc,
+                )
+                skipped.append((sample.filepath, str(exc)))
+                yield ctx.trigger(
+                    "set_progress",
+                    dict(
+                        progress=(i + 1) / total,
+                        label=f"Glitching {i + 1}/{total} (1 skipped)",
+                    ),
+                )
+                continue
 
             new_sample = fo.Sample(filepath=out_path)
             new_sample.tags.extend(sample.tags)
@@ -419,12 +444,20 @@ class ApplyGlitch(foo.Operator):
 
         dataset.add_samples(new_samples)
         self._cleanup_preview_file(ctx)
-        ctx.ops.notify(f"Created {len(new_samples)} glitched samples")
+        if skipped:
+            ctx.ops.notify(
+                f"Created {len(new_samples)} glitched samples; "
+                f"{len(skipped)} skipped due to I/O errors (see server logs)",
+                type="warning",
+            )
+        else:
+            ctx.ops.notify(f"Created {len(new_samples)} glitched samples")
         ctx.ops.reload_dataset()
 
         yield {
-            "status": "ok",
+            "status": "ok" if not skipped else "partial",
             "count": len(new_samples),
+            "skipped": len(skipped),
             "modes": profile.enabled_modes,
         }
 
@@ -434,12 +467,18 @@ class ApplyGlitch(foo.Operator):
         result = ctx.results or {}
 
         count = result.get("count", 0)
+        skipped = result.get("skipped", 0)
         modes = result.get("modes", [])
         mode_str = ", ".join(MODE_LABELS.get(m, m) for m in modes) if modes else "none"
 
-        outputs.md(
-            f"**Generated {count} glitched sample(s)**\n\n**Modes applied:** {mode_str}"
-        )
+        lines = [f"**Generated {count} glitched sample(s)**"]
+        if skipped:
+            lines.append(
+                f"**Skipped:** {skipped} sample(s) due to I/O errors — "
+                "see the FiftyOne server logs for details."
+            )
+        lines.append(f"**Modes applied:** {mode_str}")
+        outputs.md("\n\n".join(lines))
         return types.Property(outputs)
 
     # ---------------------------------------------------------------
