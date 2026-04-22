@@ -34,17 +34,28 @@ operators.py           ApplyGlitch (resolve_input split into per-section _render
 
 ## Installation
 
-The plugin lives inside your FiftyOne plugins directory. Copy or symlink it there if it isn't already:
+### CLI
 
 ```bash
-# Find your plugins directory
-python -c "import fiftyone as fo; print(fo.config.plugins_dir)"
-
-# Symlink (adjust paths as needed)
-ln -s /path/to/fo-glitch "$PLUGINS_DIR/@Burhan-Q/fo-glitch"
+fiftyone plugins download https://github.com/Burhan-Q/fo-glitch
 ```
 
-No additional Python dependencies beyond FiftyOne itself — the engine uses only NumPy and Pillow, both of which ship with FiftyOne.
+### Python
+
+```python
+import fiftyone.plugins as fop
+
+fop.download("https://github.com/Burhan-Q/fo-glitch")
+```
+
+### Requirements
+
+- Python >= 3.11
+- [FiftyOne](https://docs.voxel51.com) >= 1.14.1
+- [NumPy](https://numpy.org/) >= 2.4.4
+- [Pillow](https://pillow.readthedocs.io/) >= 12.2.0
+
+NumPy and Pillow ship with FiftyOne; no extra install step is needed unless you want to pin newer versions yourself.
 
 ## Quick start
 
@@ -172,6 +183,15 @@ Version numbers track `pyproject.toml`.  Dates are the day the change landed on 
 - **Real-time canvas preview** — hybrid JS panel with live pixel manipulation instead of the current operator-form preview
 - **Video support** — apply frame-level corruption patterns to video datasets
 - **Cursor-aware suffix insertion** — small buttons next to the suffix field that insert `{TIMESTAMP}` etc. at the cursor position rather than the end
+
+## Development
+
+Clone the repository and symlink into your FiftyOne plugins directory:
+
+```bash
+git clone https://github.com/Burhan-Q/fo-glitch.git
+ln -s "$(pwd)/fo-glitch" "$(fiftyone config plugins_dir)/@Burhan-Q/fo-glitch"
+```
 
 ## License
 
