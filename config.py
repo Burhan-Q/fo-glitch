@@ -307,14 +307,52 @@ BLOCK_PATTERNS: tuple[str, ...] = ("uniform", "localized", "streak")
 
 _UNSAFE_FILENAME_RE = re.compile(r"[^\w\-.,]")
 
+VALID_PLACEHOLDERS: frozenset[str] = frozenset(
+    {"TIMESTAMP", "DATETIME", "DATE", "INDEX", "PROFILE", "MODE"}
+)
+"""The set of placeholder names recognized by :func:`expand_suffix`."""
+
+# Matches any {...} token. ``[^{}]*`` keeps the match anchored to a single
+# pair of braces, so ``{LABEL}``, ``{1234}``, ``{AB-!@ 12}``, and even ``{}``
+# are all captured without being confused by mismatched braces elsewhere.
+_PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
+
+VALID_PLACEHOLDERS_HINT: str = ", ".join(
+    "{" + p + "}"
+    for p in ("TIMESTAMP", "DATETIME", "DATE", "INDEX", "PROFILE", "MODE")
+)
+"""Pre-formatted comma-separated list of valid placeholders for UI strings."""
+
 
 def _sanitize_for_filename(value: str) -> str:
     """Replace characters that are unsafe in filenames with underscores."""
     return _UNSAFE_FILENAME_RE.sub("_", value)
 
 
+def find_unknown_placeholders(template: str) -> list[str]:
+    """Return every ``{...}`` token in *template* that is not a valid placeholder.
+
+    The tokens are returned exactly as they appear in the input (with the
+    braces), in order of first occurrence and de-duplicated, so the UI can
+    show the user precisely what they typed.
+    """
+    seen: set[str] = set()
+    unknown: list[str] = []
+    for match in _PLACEHOLDER_RE.finditer(template or ""):
+        token = match.group(0)
+        if match.group(1) in VALID_PLACEHOLDERS or token in seen:
+            continue
+        seen.add(token)
+        unknown.append(token)
+    return unknown
+
+
 def expand_suffix(template: str, profile: GlitchProfile, index: int) -> str:
     """Expand placeholder tokens in a filename suffix template.
+
+    Known placeholders (see :data:`VALID_PLACEHOLDERS`) are substituted with
+    their runtime values.  Any remaining ``{...}`` tokens are stripped from
+    the result, since they are assumed to be typos or unsupported fields.
 
     Args:
         template: Suffix string with ``{PLACEHOLDER}`` tokens.
@@ -322,7 +360,8 @@ def expand_suffix(template: str, profile: GlitchProfile, index: int) -> str:
         index: Zero-based index of this sample within the current batch.
 
     Returns:
-        The expanded suffix string with all placeholders resolved.
+        The expanded suffix string with all known placeholders resolved and
+        any unknown ``{...}`` tokens removed.
     """
     now = datetime.now(tz=timezone.utc)
     enabled = profile.enabled_modes
@@ -339,7 +378,7 @@ def expand_suffix(template: str, profile: GlitchProfile, index: int) -> str:
     result = template
     for key, value in replacements.items():
         result = result.replace("{" + key + "}", value)
-    return result
+    return _PLACEHOLDER_RE.sub("", result)
 
 
 # ---------------------------------------------------------------------------

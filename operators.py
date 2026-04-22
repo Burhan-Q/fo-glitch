@@ -17,9 +17,11 @@ from .config import (
     MODE_DESCRIPTIONS,
     MODE_LABELS,
     TARGET_CHOICES,
+    VALID_PLACEHOLDERS_HINT,
     _safe_float,
     _safe_int,
     expand_suffix,
+    find_unknown_placeholders,
     profile_from_params,
 )
 from .glitch import apply_profile, generate_preview_image, load_image, save_image
@@ -196,15 +198,35 @@ class ApplyGlitch(foo.Operator):
             default=str(ctx.params.get("seed", "") or ""),
         )
 
+        suffix_value = str(
+            ctx.params.get("filename_suffix", "_glitch_{TIMESTAMP}")
+        )
         inputs.str(
             "filename_suffix",
             label="Filename suffix",
             description=(
-                "Appended to source filename. Placeholders: "
-                "{TIMESTAMP}, {DATETIME}, {DATE}, {INDEX}, {PROFILE}, {MODE}"
+                f"Appended to source filename. Valid placeholders: "
+                f"{VALID_PLACEHOLDERS_HINT}. Any other "
+                f"{{...}} token will be stripped from the output filename."
             ),
-            default=str(ctx.params.get("filename_suffix", "_glitch_{TIMESTAMP}")),
+            default=suffix_value,
         )
+
+        unknown_tokens = find_unknown_placeholders(suffix_value)
+        if unknown_tokens:
+            inputs.view(
+                "filename_suffix_warning",
+                types.Warning(
+                    label=(
+                        f"Unknown placeholder(s): {', '.join(unknown_tokens)}"
+                    ),
+                    description=(
+                        f"These tokens are not recognized and will be "
+                        f"stripped from the output filename. Valid "
+                        f"placeholders: {VALID_PLACEHOLDERS_HINT}."
+                    ),
+                ),
+            )
 
         # -- Augment Samples ----------------------------------------
         inputs.md("### Augment Samples")

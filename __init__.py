@@ -14,8 +14,10 @@ from fiftyone.operators.panel import Panel, PanelConfig
 from .config import (
     GLITCH_MODES,
     MODE_LABELS,
+    VALID_PLACEHOLDERS_HINT,
     GlitchProfile,
     ModeConfig,
+    find_unknown_placeholders,
     get_dataset_profile,
     profile_from_params,
     save_dataset_profile,
@@ -273,16 +275,36 @@ class GlitchPanel(Panel):
             on_change=self.on_seed_change,
         )
 
+        suffix_value = ctx.panel.get_state(
+            "filename_suffix", "_glitch_{TIMESTAMP}"
+        )
         panel.str(
             "filename_suffix",
             label="Filename suffix",
             description=(
-                "Appended to source filename. Placeholders: "
-                "{TIMESTAMP}, {DATETIME}, {DATE}, {INDEX}, {PROFILE}, {MODE}"
+                f"Appended to source filename. Valid placeholders: "
+                f"{VALID_PLACEHOLDERS_HINT}. Any other "
+                f"{{...}} token will be stripped from the output filename."
             ),
-            default=ctx.panel.get_state("filename_suffix", "_glitch_{TIMESTAMP}"),
+            default=suffix_value,
             on_change=self.on_suffix_change,
         )
+
+        unknown_tokens = find_unknown_placeholders(suffix_value)
+        if unknown_tokens:
+            panel.view(
+                "filename_suffix_warning",
+                types.Warning(
+                    label=(
+                        f"Unknown placeholder(s): {', '.join(unknown_tokens)}"
+                    ),
+                    description=(
+                        f"These tokens are not recognized and will be "
+                        f"stripped from the output filename. Valid "
+                        f"placeholders: {VALID_PLACEHOLDERS_HINT}."
+                    ),
+                ),
+            )
 
         # -- Apply -----------------------------------------------------------
         panel.str(
