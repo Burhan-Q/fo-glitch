@@ -1,11 +1,13 @@
 # FiftyOne Plugin Glitch Augmentation
 
-<img
-    width="600" 
-    height="450" 
-    alt="FiftyOne Glitch Augmentation plugin demo preview" 
-    src="https://github.com/user-attachments/assets/940bd974-c714-4710-8847-59eddef68d99" 
-/>
+<p align="center">
+    <img
+        width="600" 
+        height="450" 
+        alt="FiftyOne Glitch Augmentation plugin demo preview" 
+        src="https://github.com/user-attachments/assets/940bd974-c714-4710-8847-59eddef68d99" 
+    />
+</p>
 
 A [FiftyOne](https://docs.voxel51.com) plugin that generates realistic camera-corruption artifacts for training-data augmentation. Apply glitch effects — pixel sorting, macro-block corruption, channel shifting, and more — to dataset samples directly from the FiftyOne App.
 
